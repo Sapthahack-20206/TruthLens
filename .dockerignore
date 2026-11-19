@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.gemini
+.vercel
+*.log
+npm-debug.log*
+.env*.local
+dist
+coverage
+data/*.json
+!models/*.onnx
+!models/README.md

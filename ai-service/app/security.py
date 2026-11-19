@@ -1,10 +1,16 @@
+import secrets
 from typing import Optional
-from .config import AI_SERVICE_API_KEY
+from .config import AI_SERVICE_API_KEY, IS_PRODUCTION
 
 def check_token(token: Optional[str]) -> bool:
     if not AI_SERVICE_API_KEY:
+        # In strict production mode, API key is mandatory
+        if IS_PRODUCTION:
+            return False
         return True
-    return bool(token and token == AI_SERVICE_API_KEY)
+    if not token:
+        return False
+    return secrets.compare_digest(token, AI_SERVICE_API_KEY)
 
 try:
     from fastapi import Security, HTTPException, status

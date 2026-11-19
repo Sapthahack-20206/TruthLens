@@ -37,6 +37,7 @@ All protected inference endpoints support authentication via the `X-API-Key` hea
 
 ### Diagnostics & Readiness
 - **`GET /health`**: Liveness probe returning service name and version.
+- **`GET /models`** or **`GET /api/v1/models`**: Models inventory listing loaded ONNX classifiers, architectures, input shapes, and operational status.
 - **`GET /api/v1/models/availability`**: Readiness probe checking whether ONNX ViT and YuNet models are loaded and operational.
 
 ### Forensic Inference

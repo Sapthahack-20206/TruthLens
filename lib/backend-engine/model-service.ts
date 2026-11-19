@@ -104,6 +104,9 @@ export class ModelService {
     }
 
     if (this.aiServiceUrl) {
+      if (process.env.NODE_ENV === 'production' && !this.aiServiceApiKey) {
+        logger.error('CRITICAL: AI_SERVICE_API_KEY is required in production when AI_SERVICE_URL is configured.')
+      }
       logger.info(`ModelService initialized with remote AI inference URL: ${this.aiServiceUrl}`)
     } else {
       logger.info('ModelService initialized using local Python deepfake engine')
@@ -147,10 +150,16 @@ export class ModelService {
     // 1. Try remote AI microservice if configured
     if (this.aiServiceUrl) {
       try {
-        const response = await fetch(`${this.aiServiceUrl}/api/v1/models/availability`, {
+        let response = await fetch(`${this.aiServiceUrl}/api/v1/models/availability`, {
           headers: this.getAuthHeaders(),
           signal: AbortSignal.timeout(5000),
         })
+        if (!response.ok && response.status === 404) {
+          response = await fetch(`${this.aiServiceUrl}/models`, {
+            headers: this.getAuthHeaders(),
+            signal: AbortSignal.timeout(5000),
+          })
+        }
         if (response.ok) {
           const data = await response.json()
           const result = {

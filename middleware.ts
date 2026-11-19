@@ -142,6 +142,12 @@ export function middleware(request: NextRequest) {
       response.headers.set('Access-Control-Allow-Methods', ALLOWED_METHODS)
       response.headers.set('Access-Control-Allow-Headers', ALLOWED_HEADERS)
       response.headers.set('Vary', 'Origin')
+    } else {
+      // Reject cross-origin API calls with unauthorized origin
+      return NextResponse.json(
+        { detail: 'Forbidden: Origin is not permitted by CORS policy.', code: 'CORS_ORIGIN_DENIED' },
+        { status: 403 }
+      )
     }
   }
 

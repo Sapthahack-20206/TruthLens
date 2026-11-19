@@ -15,6 +15,7 @@ try:
         vitPath: str
         yunetPath: str
         errors: List[str]
+        models: Optional[List[Dict[str, Any]]] = None
 
         class Config:
             populate_by_name = True

@@ -40,7 +40,27 @@ def get_model_status():
         "yunetModel": yunet_exists,
         "vitPath": str(config.VIT_MODEL_PATH),
         "yunetPath": str(config.YUNET_MODEL_PATH),
-        "errors": errors
+        "errors": errors,
+        "models": [
+            {
+                "id": "deepfake-vit-quantized",
+                "name": "Vision Transformer Deepfake Classifier",
+                "architecture": "ViT",
+                "type": "onnx",
+                "version": "1.0.0",
+                "loaded": vit_exists,
+                "inputShape": [1, 3, 224, 224]
+            },
+            {
+                "id": "face-detection-yunet",
+                "name": "YuNet Face Detector & Landmark Localizer",
+                "architecture": "YuNet",
+                "type": "onnx",
+                "version": "2023mar",
+                "loaded": yunet_exists,
+                "inputShape": [1, 3, "dynamic", "dynamic"]
+            }
+        ]
     }
 
 # Attempt FastAPI initialization with fallback to Starlette ASGI
@@ -75,9 +95,9 @@ if USE_FASTAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=config.ALLOWED_ORIGINS,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -85,6 +105,8 @@ if USE_FASTAPI:
     def health_check():
         return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
+    @app.get("/models", response_model=ModelAvailabilityResponse, tags=["Diagnostics"])
+    @app.get("/api/v1/models", response_model=ModelAvailabilityResponse, tags=["Diagnostics"])
     @app.get("/api/v1/models/availability", response_model=ModelAvailabilityResponse, tags=["Diagnostics"])
     def model_availability():
         return get_model_status()
@@ -259,6 +281,8 @@ else:
 
     routes = [
         Route("/health", health_endpoint, methods=["GET"]),
+        Route("/models", availability_endpoint, methods=["GET"]),
+        Route("/api/v1/models", availability_endpoint, methods=["GET"]),
         Route("/api/v1/models/availability", availability_endpoint, methods=["GET"]),
         Route("/api/v1/analyze/image", analyze_image_endpoint, methods=["POST"]),
         Route("/api/v1/analyze/video", analyze_video_endpoint, methods=["POST"]),
@@ -268,8 +292,8 @@ else:
     app = Starlette(routes=routes)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=config.ALLOWED_ORIGINS,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )

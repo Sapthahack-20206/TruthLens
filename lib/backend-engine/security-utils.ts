@@ -2,8 +2,8 @@ import path from 'node:path'
 
 export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024 // 100 MB overall limit
 export const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024 // 100 MB
-export const MAX_AUDIO_SIZE_BYTES = 30 * 1024 * 1024 // 30 MB
-export const MAX_IMAGE_SIZE_BYTES = 15 * 1024 * 1024 // 15 MB
+export const MAX_AUDIO_SIZE_BYTES = 50 * 1024 * 1024 // 50 MB
+export const MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024 // 25 MB
 export const MAX_CONTEXT_LENGTH = 5000 // 5,000 characters max for supplied notes/context
 
 export const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{3,64}$/

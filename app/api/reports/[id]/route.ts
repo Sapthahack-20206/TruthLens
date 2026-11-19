@@ -26,13 +26,16 @@ export async function GET(
       )
     }
 
-    const { effectiveUserId } = authService.getAuthContext(req)
+    const { user, effectiveUserId } = await authService.getAuthContextAsync(req)
 
     // Baseline sample report rep-baseline-001 is open for inspection
     const isBaselineSample = validId === 'rep-baseline-001' || validId === 'inv-baseline-sample'
 
-    // Retrieve raw record to verify existence and check ownership
-    const unverifiedRecord = investigationStore.getRawRecord(validId)
+    // Retrieve raw record to verify existence and check ownership (in-memory + database fallback)
+    let unverifiedRecord = investigationStore.getRawRecord(validId)
+    if (!unverifiedRecord && !isBaselineSample) {
+      unverifiedRecord = (await databaseService.getInvestigation(validId)) || undefined
+    }
     const unverifiedOutput = investigationStore.getRawOutput(validId)
 
     if (!unverifiedRecord && !unverifiedOutput && !isBaselineSample) {
@@ -45,8 +48,17 @@ export async function GET(
     // Ownership validation: verify effectiveUserId matches the owner
     const ownerUserId = unverifiedRecord?.userId || (unverifiedOutput as unknown as { userId?: string })?.userId
 
-    if (ownerUserId && !isBaselineSample) {
-      if (ownerUserId !== effectiveUserId) {
+    if (!isBaselineSample) {
+      // 1. Require authentication for registered user reports
+      if (ownerUserId?.startsWith('usr-') && !user) {
+        return NextResponse.json(
+          { detail: 'Authentication required before accessing this forensic report.' },
+          { status: 401 }
+        )
+      }
+
+      // 2. Strict ownership check: prevent cross-user authorization bypass
+      if (ownerUserId && ownerUserId !== effectiveUserId) {
         return NextResponse.json(
           { detail: 'Forbidden: You do not have authorization to view or download this forensic report.' },
           { status: 403 }
@@ -54,8 +66,8 @@ export async function GET(
       }
     }
 
-    const output = isBaselineSample ? unverifiedOutput : investigationStore.getOutput(validId, effectiveUserId)
-    const record = isBaselineSample ? unverifiedRecord : investigationStore.getRecord(validId, effectiveUserId)
+    const output = isBaselineSample ? unverifiedOutput : (investigationStore.getOutput(validId, effectiveUserId) || unverifiedOutput)
+    const record = isBaselineSample ? unverifiedRecord : (investigationStore.getRecord(validId, effectiveUserId) || unverifiedRecord)
 
     const reportData: ForensicReportData = {
       reportId: validId,

@@ -28,15 +28,16 @@ def test_health_check():
     print("✓ Health check endpoint PASSED")
 
 def test_models_availability():
-    """Verify /api/v1/models/availability reports ViT and YuNet model status."""
-    response = client.get("/api/v1/models/availability")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["available"] is True
-    assert data["vitModel"] is True
-    assert data["yunetModel"] is True
-    assert len(data["errors"]) == 0
-    print(f"✓ Model availability check PASSED (ViT: {data['vitPath']}, YuNet: {data['yunetPath']})")
+    """Verify /models and /api/v1/models/availability reports ViT and YuNet model status."""
+    for path in ["/models", "/api/v1/models", "/api/v1/models/availability"]:
+        response = client.get(path)
+        assert response.status_code == 200, f"Endpoint {path} failed: {response.text}"
+        data = response.json()
+        assert data["available"] is True
+        assert data["vitModel"] is True
+        assert data["yunetModel"] is True
+        assert len(data["errors"]) == 0
+    print(f"✓ Model availability checks (/models & /api/v1/models/availability) PASSED (ViT: {data['vitPath']}, YuNet: {data['yunetPath']})")
 
 def test_analyze_real_image():
     """Verify image analysis endpoint on genuine forensic sample image."""

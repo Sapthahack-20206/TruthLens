@@ -30,8 +30,17 @@ SERVICE_VERSION = "1.0.0"
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
 
-# Security
+# Security & Environment
 AI_SERVICE_API_KEY = os.environ.get("AI_SERVICE_API_KEY", "")
+ENVIRONMENT = os.environ.get("ENVIRONMENT", os.environ.get("NODE_ENV", "development")).lower()
+IS_PRODUCTION = ENVIRONMENT == "production"
+
+# Configured Trusted Origins (no wildcards with credentials)
+ALLOWED_ORIGINS_RAW = os.environ.get(
+    "ALLOWED_ORIGIN",
+    os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+)
+ALLOWED_ORIGINS = [orig.strip() for orig in ALLOWED_ORIGINS_RAW.split(",") if orig.strip()]
 
 # Request Limits
 MAX_IMAGE_SIZE_BYTES = int(os.environ.get("MAX_IMAGE_SIZE_BYTES", 25 * 1024 * 1024))   # 25 MB

@@ -16,7 +16,7 @@ import {
   sanitizeFilename,
 } from './security-utils'
 
-const DEFAULT_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || process.env.STORAGE_BUCKET || 'truthlens-forensic-artifacts'
+const DEFAULT_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || process.env.STORAGE_BUCKET || 'truthlens-artifacts'
 export const STORAGE_BUCKET = DEFAULT_BUCKET
 
 // Strictly temporary writable directory on all hosting environments (including Vercel /tmp)
@@ -221,14 +221,20 @@ export class CloudStorageService {
 
     const supabase = databaseService?.getSupabase?.() || this.supabase
     if (supabase) {
-      try {
-        const { data, error } = await supabase.storage.from(this.bucketName).download(`artifacts/${safeBase}`)
-        if (!error && data) {
-          const ab = await data.arrayBuffer()
-          return { data: Buffer.from(ab), contentType }
+      const candidates = [
+        `artifacts/${safeBase}`,
+        safeBase,
+      ]
+      for (const candidate of candidates) {
+        try {
+          const { data, error } = await supabase.storage.from(this.bucketName).download(candidate)
+          if (!error && data) {
+            const ab = await data.arrayBuffer()
+            return { data: Buffer.from(ab), contentType }
+          }
+        } catch {
+          // continue
         }
-      } catch (err) {
-        logger.warn(`Error downloading artifact ${safeBase} from Supabase`, err)
       }
     }
 
@@ -435,8 +441,33 @@ export class CloudStorageService {
     return crypto.timingSafeEqual(bufSig, bufExpected)
   }
 
+  /**
+   * Generates a temporary signed download URL for an object in the private Supabase storage bucket.
+   */
+  public async generateSignedDownloadUrl(
+    storageKey: string,
+    expiresInSeconds = 3600
+  ): Promise<string | null> {
+    const supabase = databaseService?.getSupabase?.() || this.supabase
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.storage
+          .from(this.bucketName)
+          .createSignedUrl(storageKey, expiresInSeconds)
+        if (!error && data?.signedUrl) {
+          return data.signedUrl
+        }
+      } catch (err) {
+        logger.warn(`Failed to create signed download URL for ${storageKey}`, err)
+      }
+    }
+    return null
+  }
+
   public verifyStorageKeyOwnership(storageKey: string, userId: string): boolean {
     if (!storageKey || !userId) return false
+    // Defense-in-depth against directory traversal
+    if (storageKey.includes('..') || storageKey.includes('\\')) return false
     const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, '_')
     const expectedPrefix = `uploads/${safeUserId}/`
     return storageKey.startsWith(expectedPrefix)
@@ -518,18 +549,37 @@ export class CloudStorageService {
 
   public purgeStaleUploads(maxAgeMs = 60 * 60 * 1000) {
     try {
-      if (!fs.existsSync(this.localStagingDir)) return
       const now = Date.now()
-      const files = fs.readdirSync(this.localStagingDir)
-      for (const file of files) {
-        const full = path.join(this.localStagingDir, file)
-        try {
-          const stats = fs.statSync(full)
-          if (now - stats.mtimeMs > maxAgeMs) {
-            fs.unlinkSync(full)
+      // 1. Purge staged uploads
+      if (fs.existsSync(this.localStagingDir)) {
+        const files = fs.readdirSync(this.localStagingDir)
+        for (const file of files) {
+          const full = path.join(this.localStagingDir, file)
+          try {
+            const stats = fs.statSync(full)
+            if (now - stats.mtimeMs > maxAgeMs) {
+              fs.unlinkSync(full)
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
+        }
+      }
+      // 2. Purge temporary evidence staging files in TEMP_BASE_DIR
+      if (fs.existsSync(TEMP_BASE_DIR)) {
+        const files = fs.readdirSync(TEMP_BASE_DIR)
+        for (const file of files) {
+          if (file.startsWith('evidence_')) {
+            const full = path.join(TEMP_BASE_DIR, file)
+            try {
+              const stats = fs.statSync(full)
+              if (now - stats.mtimeMs > maxAgeMs) {
+                fs.unlinkSync(full)
+              }
+            } catch {
+              // ignore
+            }
+          }
         }
       }
     } catch (err) {

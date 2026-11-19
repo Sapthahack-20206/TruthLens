@@ -83,7 +83,21 @@ export class RateLimiter {
         const distributedResult = await this.checkUpstashLimit(clientKey, type, config)
         if (distributedResult) return distributedResult
       } catch (err) {
-        logger.warn('Distributed rate limit check failed, falling back to local memory', err)
+        logger.warn('Distributed rate limit check failed', err)
+      }
+
+      // In production, prevent silent fallback to in-memory rate limiting unless explicitly permitted
+      const isProduction = process.env.NODE_ENV === 'production'
+      const allowFallback = process.env.ALLOW_LOCAL_RATELIMIT_FALLBACK === 'true'
+      if (isProduction && !allowFallback) {
+        logger.error('CRITICAL: Distributed rate limiter unreachable in production. Local in-memory fallback is disabled.')
+        return {
+          allowed: false,
+          remaining: 0,
+          limit: config.maxRequests,
+          retryAfterSeconds: 5,
+          isDistributed: true,
+        }
       }
     }
 
