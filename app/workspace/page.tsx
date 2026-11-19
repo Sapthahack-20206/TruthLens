@@ -21,11 +21,7 @@ function WorkspaceLoading() {
           <span>Reports</span>
           <span>Cross-modal</span>
         </nav>
-        <div className="app-nav-actions">
-          <span className="judge-guide-trigger-btn">
-            <span>Judge Guide</span>
-          </span>
-        </div>
+        <div className="app-nav-actions" />
       </header>
       <div className="workspace-main">
         <div className="workspace-title-row">

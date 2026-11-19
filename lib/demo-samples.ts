@@ -1,6 +1,6 @@
 /**
- * TruthLens Demonstration Samples & Judge Evaluation Guide
- * Provides real pre-packaged evidentiary media for live hackathon evaluations.
+ * TruthLens Demonstration Samples & Investigation Guide
+ * Provides real pre-packaged evidentiary media for live evaluations.
  */
 
 export interface DemoSamplePreset {
@@ -126,70 +126,3 @@ Correlate visual facial motion in 'forensic_video_sample.mp4' with speech acoust
 
   return { files, context }
 }
-
-export interface DemoStep {
-  step: number
-  title: string
-  actionLabel: string
-  description: string
-  evaluationCriterion: string
-}
-
-export const JUDGE_DEMO_STEPS: DemoStep[] = [
-  {
-    step: 1,
-    title: 'The Problem: Weaponized Generative AI & Black-Box Opacity',
-    actionLabel: 'Review Problem & Threat Landscape',
-    description:
-      'Deepfakes, voice clones, and cheap fakes undermine digital truth. Existing detectors output unverified black-box percentages (e.g. "99% Fake") without evidence. TruthLens delivers verifiable, explainable digital forensics.',
-    evaluationCriterion: 'Clear real-world problem statement and ethical stance.',
-  },
-  {
-    step: 2,
-    title: 'Stage Evidence & Verify Chain of Custody',
-    actionLabel: 'Load Benchmark Sample Media',
-    description:
-      'Upload video, audio, image, or transcript files. TruthLens computes cryptographic SHA-256 hashes immediately to establish tamper-evident chain of custody.',
-    evaluationCriterion: 'Robust multi-file staging and cryptographic integrity.',
-  },
-  {
-    step: 3,
-    title: 'Transparent Multi-Stage Pipeline Scanning',
-    actionLabel: 'Monitor Live Forensic Progress',
-    description:
-      'Watch real-time analysis progress: header demuxing via FFmpeg, face tracking, spectral Laplacian variance, boundary edge calculation, and acoustic waveform decoding.',
-    evaluationCriterion: 'Live feedback, smooth animations, and zero UI lockup.',
-  },
-  {
-    step: 4,
-    title: 'Explainable Findings & Heuristic Distinction',
-    actionLabel: 'Inspect Forensic Findings',
-    description:
-      'Review categorized indicators. TruthLens strictly separates heuristic findings (tagged isHeuristic: true) from neural model outputs, with clear plain-English explanations and next steps.',
-    evaluationCriterion: 'Honest, verifiable outputs without hallucinated claims.',
-  },
-  {
-    step: 5,
-    title: 'Interactive Timeline & Face Bounding Box Preview',
-    actionLabel: 'Seek Keyframes & Zoom Frame Modal',
-    description:
-      'Click any keyframe or suspicious timestamp to seek the video player to that exact millisecond. Click the zoom button to inspect the enlarged frame with face bounding box overlays.',
-    evaluationCriterion: 'Deep interactive media player and synchronized playback.',
-  },
-  {
-    step: 6,
-    title: 'Tri-Modal Cross-Verification & Relational Topology',
-    actionLabel: 'Explore Cross-Modal Correlation',
-    description:
-      'Connect video, audio, and text into a relational graph. Surface phoneme-viseme lip-sync mismatches and lexical transcript inconsistencies.',
-    evaluationCriterion: 'Novel cross-modal correlation architecture.',
-  },
-  {
-    step: 7,
-    title: 'Certified Forensic PDF Report Export',
-    actionLabel: 'Generate & Download PDF Report',
-    description:
-      'Produce an official, courtroom-ready forensic report document summarizing metadata, findings, timeline, limitations, and examiner recommendations.',
-    evaluationCriterion: 'Complete end-to-end deliverable for real stakeholders.',
-  },
-]

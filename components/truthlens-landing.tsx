@@ -7,7 +7,6 @@ import {
   ArrowDown,
   ArrowRight,
   AudioLines,
-  Award,
   Check,
   ChevronDown,
   Clock,
@@ -32,9 +31,7 @@ import {
   Zap,
 } from 'lucide-react'
 import TruthLensRobot from '@/components/truthlens-robot'
-import JudgeDemoGuide from '@/components/judge-demo-guide'
 import { createInvestigation } from '@/lib/truthlens-api'
-import { JUDGE_DEMO_STEPS } from '@/lib/demo-samples'
 
 const LOGO_URL = 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/TruthLens%20Aperture%20Logo-Zh8uJ1dIwq1yd1IEsjzn4BDgWzmMQA.png'
 
@@ -62,7 +59,6 @@ export default function TruthLensLanding() {
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [showJudgeGuide, setShowJudgeGuide] = useState(false)
 
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return
@@ -103,19 +99,9 @@ export default function TruthLensLanding() {
           <a href="#product" onClick={() => setMobileOpen(false)}>Product</a>
           <a href="#features" onClick={() => setMobileOpen(false)}>Features</a>
           <a href="#how-it-works" onClick={() => setMobileOpen(false)}>How it works</a>
-          <a href="#demo-steps" onClick={() => setMobileOpen(false)}>Demo Guide</a>
           <a href="#forensic-science" onClick={() => setMobileOpen(false)}>Methodology</a>
           <a href="#about" onClick={() => setMobileOpen(false)}>About</a>
           <div className="mobile-only-nav-actions">
-            <button
-              type="button"
-              className="judge-guide-trigger-btn mobile-action-btn"
-              onClick={() => { setShowJudgeGuide(true); setMobileOpen(false); }}
-              title="Open Interactive Hackathon Judge Walkthrough"
-            >
-              <Award className="h-3.5 w-3.5" />
-              <span>Judge Guide</span>
-            </button>
             <Link className="nav-workspace-pill mobile-action-btn" href="/workspace" onClick={() => setMobileOpen(false)}>
               Workspace <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -126,15 +112,6 @@ export default function TruthLensLanding() {
           </div>
         </nav>
         <div className="nav-actions">
-          <button
-            type="button"
-            className="judge-guide-trigger-btn"
-            onClick={() => setShowJudgeGuide(true)}
-            title="Open Interactive Hackathon Judge Walkthrough"
-          >
-            <Award className="h-3.5 w-3.5" />
-            <span>Judge Guide</span>
-          </button>
           <Link className="nav-workspace-pill" href="/workspace">
             Workspace <ArrowRight className="h-3.5 w-3.5" />
           </Link>
@@ -209,37 +186,6 @@ export default function TruthLensLanding() {
           <span><ShieldCheck aria-hidden="true" /> Evidence-linked</span>
           <span><ScanLine aria-hidden="true" /> Multimodal</span>
           <span><Sparkles aria-hidden="true" /> Uncertainty-aware</span>
-        </div>
-      </section>
-
-      {/* JUDGE DEMONSTRATION WORKFLOW SECTION (Requirement 13) */}
-      <section className="section judge-flow-section" id="demo-steps">
-        <div className="section-heading">
-          <p className="eyebrow"><Award className="inline-block h-3.5 w-3.5 text-amber-400 mr-1" /> HACKATHON EVALUATION GUIDE</p>
-          <h2>Recommended Judge Demonstration Workflow</h2>
-          <p>Follow our structured 7-step evaluation path to observe every dimension of TruthLens from ingestion to certified report.</p>
-        </div>
-        <div className="feature-grid">
-          {JUDGE_DEMO_STEPS.map((s) => (
-            <article className="feature-card" key={s.step}>
-              <span className="feature-index">0{s.step}</span>
-              <h3>{s.title.split(':')[0]}</h3>
-              <p>{s.description}</p>
-              <div className="mt-3 text-xs text-cyan-300 font-medium">
-                ✓ Criterion: {s.evaluationCriterion}
-              </div>
-            </article>
-          ))}
-        </div>
-        <div className="text-center mt-6">
-          <button
-            type="button"
-            className="button button-dark"
-            onClick={() => setShowJudgeGuide(true)}
-          >
-            <Award className="h-4 w-4 mr-2 text-amber-400" />
-            Launch Interactive Judge Walkthrough
-          </button>
         </div>
       </section>
 
@@ -360,12 +306,6 @@ export default function TruthLensLanding() {
         <nav aria-label="Footer navigation"><a href="#about">About</a><a href="#features">Features</a><a href="mailto:hello@truthlens.ai">Contact</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
         <span className="copyright">© 2026 TruthLens. For informed review, not absolute proof.</span>
       </footer>
-
-      {/* Interactive Judge Demo Guide Modal */}
-      <JudgeDemoGuide
-        isOpen={showJudgeGuide}
-        onClose={() => setShowJudgeGuide(false)}
-      />
     </main>
   )
 }

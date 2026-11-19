@@ -9,7 +9,6 @@ import {
   AlertCircle,
   ArrowRight,
   AudioLines,
-  Award,
   Bell,
   ChevronDown,
   Download,
@@ -46,7 +45,6 @@ import MediaPreview, { useMediaPreviewUrl } from '@/components/media-preview'
 import MediaUpload from '@/components/media-upload'
 import UserDashboard from '@/components/user-dashboard'
 import AnalysisHistory from '@/components/analysis-history'
-import JudgeDemoGuide from '@/components/judge-demo-guide'
 import { DEMO_PRESETS, loadDemoSampleFile, loadDemoMultimodalBundle } from '@/lib/demo-samples'
 
 const LOGO_URL = 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/TruthLens%20Aperture%20Logo-Zh8uJ1dIwq1yd1IEsjzn4BDgWzmMQA.png'
@@ -654,8 +652,6 @@ export default function WorkspaceShell() {
     ? user.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
     : 'T'
 
-  const [showJudgeGuide, setShowJudgeGuide] = useState(false)
-
   return (
     <main className="workspace-shell">
       <header className="app-nav">
@@ -681,15 +677,6 @@ export default function WorkspaceShell() {
         </nav>
 
         <div className="app-nav-actions">
-          <button
-            type="button"
-            className="judge-guide-trigger-btn"
-            onClick={() => setShowJudgeGuide(true)}
-            title="Open Interactive Judge Walkthrough"
-          >
-            <Award className="h-3.5 w-3.5 text-amber-400" />
-            <span>Judge Guide</span>
-          </button>
           <button type="button" className="icon-button" aria-label="Notifications" disabled>
             <Bell />
           </button>
@@ -759,11 +746,6 @@ export default function WorkspaceShell() {
           <Link href="mailto:support@truthlens.ai">Examiner Support</Link>
         </footer>
       </div>
-
-      <JudgeDemoGuide
-        isOpen={showJudgeGuide}
-        onClose={() => setShowJudgeGuide(false)}
-      />
     </main>
   )
 }
