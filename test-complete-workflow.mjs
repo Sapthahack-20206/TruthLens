@@ -22,6 +22,22 @@ async function runEndToEndIntegrationTests() {
   let passed = 0
   let failed = 0
 
+  const cookieJar = {}
+  async function sessionFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {})
+    const cookieHeader = Object.entries(cookieJar).map(([k, v]) => `${k}=${v}`).join('; ')
+    if (cookieHeader) headers.set('cookie', cookieHeader)
+
+    const res = await fetch(url, { ...options, headers })
+    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('set-cookie')].filter(Boolean)
+    for (const str of setCookies) {
+      if (!str) continue
+      const parts = str.split(';')[0].split('=')
+      if (parts.length >= 2) cookieJar[parts[0].trim()] = parts.slice(1).join('=').trim()
+    }
+    return res
+  }
+
   function assert(condition, message) {
     if (condition) {
       console.log(`  [PASS] ${message}`)
@@ -84,7 +100,7 @@ async function runEndToEndIntegrationTests() {
   imgFormData.append('file', imgFile)
   imgFormData.append('context', 'Examine compression boundary and color quantization.')
 
-  const imgRes = await fetch(`${BASE_URL}/api/analyze/image`, {
+  const imgRes = await sessionFetch(`${BASE_URL}/api/analyze/image`, {
     method: 'POST',
     body: imgFormData,
   })
@@ -106,7 +122,7 @@ async function runEndToEndIntegrationTests() {
   audFormData.append('file', audFile)
   audFormData.append('context', 'Suspected audio splice at 0.5s.')
 
-  const audRes = await fetch(`${BASE_URL}/api/analyze/audio`, {
+  const audRes = await sessionFetch(`${BASE_URL}/api/analyze/audio`, {
     method: 'POST',
     body: audFormData,
   })
@@ -135,7 +151,7 @@ async function runEndToEndIntegrationTests() {
   vidFormData.append('file', vidFile)
   vidFormData.append('context', 'Deepfake face swap suspicion during televised speech.')
 
-  const vidRes = await fetch(`${BASE_URL}/api/analyze/video`, {
+  const vidRes = await sessionFetch(`${BASE_URL}/api/analyze/video`, {
     method: 'POST',
     body: vidFormData,
   })
@@ -159,7 +175,7 @@ async function runEndToEndIntegrationTests() {
   crossFormData.append('files', txtFile)
   crossFormData.append('context', 'Tri-modal verification: align speech timestamps with visual facial movement.')
 
-  const crossRes = await fetch(`${BASE_URL}/api/analyze/cross-modal`, {
+  const crossRes = await sessionFetch(`${BASE_URL}/api/analyze/cross-modal`, {
     method: 'POST',
     body: crossFormData,
   })
@@ -178,13 +194,13 @@ async function runEndToEndIntegrationTests() {
   // STAGE 5: Investigations Retrieval & History
   // ==========================================
   console.log('\n5. Testing Investigations Retrieval & History...')
-  const listRes = await fetch(`${BASE_URL}/api/investigations`)
+  const listRes = await sessionFetch(`${BASE_URL}/api/investigations`)
   assert(listRes.status === 200, `GET /api/investigations returned status 200 (Got ${listRes.status})`)
   const records = await listRes.json()
   assert(Array.isArray(records) && records.length > 0, `Investigation records retrieved (${records.length} records in store)`)
 
   const testId = records[0].id
-  const detailRes = await fetch(`${BASE_URL}/api/investigations/${encodeURIComponent(testId)}`)
+  const detailRes = await sessionFetch(`${BASE_URL}/api/investigations/${encodeURIComponent(testId)}`)
   assert(detailRes.status === 200, `GET /api/investigations/${testId} returned status 200`)
   const detailRecord = await detailRes.json()
   assert(detailRecord.id === testId, `Retrieved exact record match: ${detailRecord.id}`)
@@ -196,7 +212,7 @@ async function runEndToEndIntegrationTests() {
   console.log('\n6. Testing Forensic Report Endpoint (GET /api/reports/:id)...')
   const reportId = crossData.reportId || records[0].reportId
   if (reportId) {
-    const repRes = await fetch(`${BASE_URL}/api/reports/${encodeURIComponent(reportId)}`)
+    const repRes = await sessionFetch(`${BASE_URL}/api/reports/${encodeURIComponent(reportId)}`)
     assert(repRes.status === 200, `Report endpoint returned status 200 (Got ${repRes.status})`)
     const contentType = repRes.headers.get('content-type') || ''
     assert(contentType.includes('application/pdf'), `Report returned PDF MIME type (Got "${contentType}")`)

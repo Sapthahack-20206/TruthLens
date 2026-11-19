@@ -146,8 +146,13 @@ class InvestigationStore {
 
     // User access control:
     // If userId is provided, ensure record belongs to this user or is the default baseline sample
-    if (userId && record.userId && record.userId !== userId && record.id !== 'inv-baseline-sample') {
-      return undefined // Unauthorized access to another user's record
+    if (userId) {
+      if (record.id === 'inv-baseline-sample') {
+        return record // Baseline sample is accessible for baseline verification
+      }
+      if (!record.userId || record.userId !== userId) {
+        return undefined // Unauthorized access to another user's record
+      }
     }
 
     return record
@@ -211,11 +216,45 @@ class InvestigationStore {
 
     // Check ownership if userId provided
     const outUser = (output as unknown as { userId?: string }).userId
-    if (userId && outUser && outUser !== userId && output.id !== 'TL-BASELINE-SAMPLE') {
-      return undefined
+    if (userId) {
+      if (output.id === 'TL-BASELINE-SAMPLE') {
+        return output
+      }
+      if (!outUser || outUser !== userId) {
+        return undefined
+      }
     }
 
     return output
+  }
+
+  /**
+   * Transfers all investigation records and analysis outputs from a guest session
+   * to a newly authenticated or registered user account.
+   */
+  transferGuestRecords(fromGuestUserId: string, toUserId: string): number {
+    if (!fromGuestUserId || !toUserId || fromGuestUserId === toUserId) return 0
+    let transferred = 0
+
+    for (const [key, record] of this.records.entries()) {
+      if (record.userId === fromGuestUserId) {
+        this.records.set(key, { ...record, userId: toUserId })
+        transferred++
+      }
+    }
+
+    for (const [key, output] of this.outputs.entries()) {
+      const outUser = (output as unknown as { userId?: string }).userId
+      if (outUser === fromGuestUserId) {
+        this.outputs.set(key, { ...output, userId: toUserId } as ForensicAnalysisOutput)
+      }
+    }
+
+    if (transferred > 0) {
+      this.persistToDisk()
+    }
+
+    return transferred
   }
 
   getStats(userId?: string): UserInvestigationStats {

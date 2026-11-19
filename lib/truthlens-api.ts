@@ -134,7 +134,10 @@ function formatApiError(detail: string, contentType: string | null, fallback: st
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`${API_BASE}${path}`, init)
+    response = await fetch(`${API_BASE}${path}`, {
+      credentials: 'include',
+      ...init,
+    })
   } catch {
     throw new Error('The analysis service is unavailable. Connect the FastAPI backend and try again.')
   }
@@ -151,6 +154,7 @@ function upload<T>(path: string, body: FormData, onProgress?: (percentage: numbe
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${API_BASE}${path}`)
+    xhr.withCredentials = true
     xhr.responseType = 'text'
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100))

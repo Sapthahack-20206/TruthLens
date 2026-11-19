@@ -22,8 +22,8 @@ export async function GET(
       )
     }
 
-    const { effectiveUserId } = authService.getAuthContext(req)
-    const record = investigationStore.getRecord(validId, effectiveUserId)
+    const authContext = authService.getAuthContext(req)
+    const record = investigationStore.getRecord(validId, authContext.effectiveUserId)
 
     if (!record) {
       return NextResponse.json(
@@ -33,15 +33,16 @@ export async function GET(
     }
 
     // Attach analysis output if available so client can reopen previous analysis results
-    const output = investigationStore.getOutput(validId, effectiveUserId)
+    const output = investigationStore.getOutput(validId, authContext.effectiveUserId)
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         ...record,
         output: output ?? null,
       },
       { status: 200 }
     )
+    return authService.attachGuestCookie(response, authContext)
   } catch (err) {
     return createSafeErrorResponse(err, 'Failed to retrieve investigation details.', 500)
   }

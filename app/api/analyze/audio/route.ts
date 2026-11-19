@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const { effectiveUserId } = authService.getAuthContext(req)
+    const authContext = authService.getAuthContext(req)
 
     const contentType = req.headers.get('content-type') || ''
     if (!contentType.includes('multipart/form-data')) {
@@ -35,9 +35,10 @@ export async function POST(req: NextRequest) {
     }
 
     const context = sanitizeContextString(rawContext)
-    const result = await processAndAnalyzeMedia(file, file.name, context, 'audio', effectiveUserId)
+    const result = await processAndAnalyzeMedia(file, file.name, context, 'audio', authContext.effectiveUserId)
 
-    return NextResponse.json(result, { status: 200 })
+    const response = NextResponse.json(result, { status: 200 })
+    return authService.attachGuestCookie(response, authContext)
   } catch (err) {
     return createSafeErrorResponse(err, 'Audio forensic analysis could not be completed. The audio container may be corrupted.', 500)
   }

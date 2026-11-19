@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authService } from '@/lib/backend-engine/auth-service'
+import { authService, GUEST_COOKIE_NAME } from '@/lib/backend-engine/auth-service'
+import { investigationStore } from '@/lib/backend-engine/investigation-store'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
 
@@ -19,6 +20,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { user, token } = authService.loginUser(email, password)
+
+    // Seamlessly transfer any analysis records created while browsing as a guest
+    const guestCookie = req.cookies.get(GUEST_COOKIE_NAME)?.value
+    if (guestCookie) {
+      investigationStore.transferGuestRecords(`guest-${guestCookie}`, user.id)
+    }
 
     const response = NextResponse.json(
       {

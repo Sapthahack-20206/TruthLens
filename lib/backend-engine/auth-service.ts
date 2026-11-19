@@ -32,6 +32,17 @@ const DATA_DIR = path.join(process.cwd(), 'data')
 const USERS_FILE = path.join(DATA_DIR, 'users_db.json')
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions_db.json')
 
+import { GUEST_COOKIE_NAME, AUTH_COOKIE_NAME, GUEST_COOKIE_MAX_AGE } from './auth-constants'
+export { GUEST_COOKIE_NAME, AUTH_COOKIE_NAME, GUEST_COOKIE_MAX_AGE }
+
+export interface AuthContext {
+  user: SafeUser | null
+  effectiveUserId: string
+  isGuest: boolean
+  guestSessionId?: string
+  isNewGuest: boolean
+}
+
 class AuthService {
   private users: Map<string, User> = new Map()
   private sessions: Map<string, UserSession> = new Map()
@@ -253,14 +264,9 @@ class AuthService {
    * 3. Checks `x-user-id` header
    * 4. Checks or creates guest session ID for unauthenticated isolation
    */
-  getAuthContext(req: NextRequest): {
-    user: SafeUser | null
-    effectiveUserId: string
-    isGuest: boolean
-    guestSessionId?: string
-  } {
+  getAuthContext(req: NextRequest): AuthContext {
     // 1. Session token
-    const cookieToken = req.cookies.get('tl_session')?.value
+    const cookieToken = req.cookies.get(AUTH_COOKIE_NAME)?.value
     let token = cookieToken
 
     if (!token) {
@@ -277,6 +283,7 @@ class AuthService {
           user,
           effectiveUserId: user.id,
           isGuest: false,
+          isNewGuest: false,
         }
       }
     }
@@ -289,37 +296,62 @@ class AuthService {
         user,
         effectiveUserId: headerUserId,
         isGuest: !user,
+        isNewGuest: false,
       }
     }
 
     // 3. Guest session isolation
-    const guestCookie = req.cookies.get('tl_session_id')?.value
+    const guestCookie = req.cookies.get(GUEST_COOKIE_NAME)?.value
     if (guestCookie && /^[a-zA-Z0-9_-]{8,64}$/.test(guestCookie)) {
       return {
         user: null,
         effectiveUserId: `guest-${guestCookie}`,
         isGuest: true,
         guestSessionId: guestCookie,
+        isNewGuest: false,
       }
     }
 
-    // New unique guest ID
+    // New unique cryptographically secure guest ID (32 hex characters)
     const newGuestId = crypto.randomBytes(16).toString('hex')
     return {
       user: null,
       effectiveUserId: `guest-${newGuestId}`,
       isGuest: true,
       guestSessionId: newGuestId,
+      isNewGuest: true,
     }
+  }
+
+  /**
+   * Ensures the persistent HTTP-only secure guest cookie is attached to a response.
+   */
+  attachGuestCookie<T extends { cookies: { set: (...args: any[]) => any } }>(
+    response: T,
+    authContextOrGuestId?: AuthContext | string | null
+  ): T {
+    let guestId: string | undefined
+    if (typeof authContextOrGuestId === 'string') {
+      guestId = authContextOrGuestId
+    } else if (authContextOrGuestId && typeof authContextOrGuestId === 'object') {
+      if (authContextOrGuestId.isGuest && authContextOrGuestId.guestSessionId) {
+        guestId = authContextOrGuestId.guestSessionId
+      }
+    }
+
+    if (!guestId) return response
+
+    response.cookies.set(GUEST_COOKIE_NAME, guestId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: GUEST_COOKIE_MAX_AGE,
+    })
+
+    return response
   }
 }
 
-// Global singleton instance
-const globalAuthKey = Symbol.for('truthlens.authService')
-const globalObj = globalThis as unknown as { [key: symbol]: AuthService }
-
-if (!globalObj[globalAuthKey]) {
-  globalObj[globalAuthKey] = new AuthService()
-}
-
-export const authService = globalObj[globalAuthKey]
+// Singleton instance
+export const authService = new AuthService()

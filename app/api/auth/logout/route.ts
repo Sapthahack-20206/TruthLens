@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authService } from '@/lib/backend-engine/auth-service'
+import crypto from 'node:crypto'
+import { authService, AUTH_COOKIE_NAME } from '@/lib/backend-engine/auth-service'
 
 export async function POST(req: NextRequest) {
-  const token = req.cookies.get('tl_session')?.value
+  const token = req.cookies.get(AUTH_COOKIE_NAME)?.value
   if (token) {
     authService.deleteSession(token)
   }
@@ -12,6 +13,11 @@ export async function POST(req: NextRequest) {
     { status: 200 }
   )
 
-  response.cookies.delete('tl_session')
+  response.cookies.delete(AUTH_COOKIE_NAME)
+
+  // Issue a fresh, clean guest session ID so logged-out state is completely isolated
+  const freshGuestId = crypto.randomUUID().replace(/-/g, '')
+  authService.attachGuestCookie(response, freshGuestId)
+
   return response
 }

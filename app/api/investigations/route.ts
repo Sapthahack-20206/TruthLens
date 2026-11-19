@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const { effectiveUserId } = authService.getAuthContext(req)
+    const authContext = authService.getAuthContext(req)
+    const { effectiveUserId } = authContext
     const { searchParams } = new URL(req.url)
 
     const query = (searchParams.get('search') || '').trim().toLowerCase()
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
       const paginatedRecords = records.slice(startIndex, startIndex + limit)
       const stats = investigationStore.getStats(effectiveUserId)
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           records: paginatedRecords,
           total,
@@ -86,10 +87,12 @@ export async function GET(req: NextRequest) {
         },
         { status: 200 }
       )
+      return authService.attachGuestCookie(response, authContext)
     }
 
     // Standard list for direct consumers
-    return NextResponse.json(records, { status: 200 })
+    const response = NextResponse.json(records, { status: 200 })
+    return authService.attachGuestCookie(response, authContext)
   } catch (err) {
     return createSafeErrorResponse(err, 'Failed to retrieve investigation records.', 500)
   }
@@ -100,7 +103,8 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const { effectiveUserId } = authService.getAuthContext(req)
+    const authContext = authService.getAuthContext(req)
+    const { effectiveUserId } = authContext
 
     const contentType = req.headers.get('content-type') || ''
     if (!contentType.includes('multipart/form-data')) {
@@ -128,13 +132,14 @@ export async function POST(req: NextRequest) {
     const safeName = sanitizeFilename(primaryFile.name)
     const result = await processAndAnalyzeMedia(primaryFile, safeName, context, undefined, effectiveUserId)
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         id: result.investigationId,
         status: result.status,
       },
       { status: 201 }
     )
+    return authService.attachGuestCookie(response, authContext)
   } catch (err) {
     return createSafeErrorResponse(err, 'Failed to create and process investigation.', 500)
   }
