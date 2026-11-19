@@ -49,7 +49,7 @@ export interface EvidenceRelationship {
   target: string
   relationship: string
   explanation?: string
-  inconsistencyType?: 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'general'
+  inconsistencyType?: 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'temporal-splice' | 'general'
 }
 
 export interface ForensicAnalysisOutput {

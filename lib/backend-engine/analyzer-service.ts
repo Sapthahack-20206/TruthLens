@@ -98,7 +98,37 @@ export async function processAndAnalyzeMedia(
     allErrors.push(...imgRes.processingErrors)
   }
 
-  // 3. Determine Final Veracity Assessment (Strictly: Potentially Manipulated | No Significant Indicators Detected | Requires Further Review)
+  // 3. Multimodal Correlation Engine Execution
+  const { executeMultimodalCorrelation } = await import('@/lib/multimodal-correlation-engine')
+  const corrResult = executeMultimodalCorrelation({
+    videoFindings: allIndicators.filter((i) => i.category === 'video'),
+    audioFindings: allIndicators.filter((i) => i.category === 'audio'),
+    imageFindings: allIndicators.filter((i) => i.category === 'image'),
+    transcriptFindings: allIndicators.filter((i) => i.category === 'transcript'),
+    suspiciousTimestamps: allTimestamps,
+    suppliedContext: context,
+    mediaMetadata: metadata,
+  })
+
+  // Incorporate combined correlation relationships
+  for (const cf of corrResult.combinedFindings) {
+    allRelationships.push({
+      source: cf.modalitiesInvolved[0]?.toUpperCase() || 'PRIMARY STREAM',
+      target: cf.modalitiesInvolved[1]?.toUpperCase() || 'SECONDARY STREAM',
+      relationship: cf.title,
+      explanation: `${cf.explanation} (${cf.whyFlagged})`,
+      inconsistencyType: cf.inconsistencyType,
+    })
+  }
+
+  // Incorporate inconclusive notices into limitations
+  for (const reason of corrResult.inconclusiveReasons) {
+    if (!allLimitations.includes(reason)) {
+      allLimitations.push(reason)
+    }
+  }
+
+  // 4. Determine Final Veracity Assessment (Strictly: Potentially Manipulated | No Significant Indicators Detected | Requires Further Review)
   const hasCriticalOrHigh = allIndicators.some((i) => i.severity === 'critical' || i.severity === 'high')
   let uncertaintyStatus: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review' = 'Requires Further Review'
   let assessment = ''

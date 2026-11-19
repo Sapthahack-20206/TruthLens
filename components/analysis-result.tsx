@@ -27,6 +27,8 @@ import {
 } from 'lucide-react'
 import { getSafeVisualizationUrl, type ForensicFinding, type ForensicResponse } from '@/lib/truthlens-api'
 import EvidenceGraph, { type EvidenceRelationship } from '@/components/evidence-graph'
+import MultimodalCorrelationPanel from '@/components/multimodal-correlation-panel'
+import type { CorrelationInput } from '@/lib/multimodal-correlation-engine'
 import { generateForensicPdfBlob, type ForensicReportData } from '@/components/forensic-pdf-generator'
 
 interface EnrichedFinding extends ForensicFinding {
@@ -150,6 +152,75 @@ export default function AnalysisResult({
     if (selectedModality === 'all') return enrichedFindings
     return enrichedFindings.filter((f) => f.evidenceType === selectedModality)
   }, [enrichedFindings, selectedModality])
+
+  // Multimodal Correlation Input
+  const correlationInput: CorrelationInput = useMemo(() => {
+    const rawMeta = result?.metadata ?? {}
+    const hasVideo = section.toLowerCase().includes('video') || 'duration' in rawMeta || 'fps' in rawMeta || videoFindings.length > 0
+    const hasAudio = section.toLowerCase().includes('audio') || 'sampleRate' in rawMeta || 'channels' in rawMeta || audioFindings.length > 0
+    const hasImage = section.toLowerCase().includes('image') || imageFindings.length > 0
+    const hasTranscript = transcriptFindings.length > 0 || 'transcript' in rawMeta
+
+    return {
+      videoFindings: videoFindings.map((f) => ({
+        id: f.id,
+        title: f.title ?? 'Video finding',
+        description: f.description,
+        timestamp: f.timestamp,
+        confidence: typeof f.confidence === 'number' ? f.confidence : undefined,
+        severity: f.severity,
+      })),
+      audioFindings: audioFindings.map((f) => ({
+        id: f.id,
+        title: f.title ?? 'Audio finding',
+        description: f.description,
+        timestamp: f.timestamp,
+        confidence: typeof f.confidence === 'number' ? f.confidence : undefined,
+        severity: f.severity,
+      })),
+      imageFindings: imageFindings.map((f) => ({
+        id: f.id,
+        title: f.title ?? 'Image finding',
+        description: f.description,
+        timestamp: f.timestamp,
+        confidence: typeof f.confidence === 'number' ? f.confidence : undefined,
+        severity: f.severity,
+      })),
+      transcriptFindings: transcriptFindings.map((f) => ({
+        id: f.id,
+        title: f.title ?? 'Transcript finding',
+        description: f.description,
+        timestamp: f.timestamp,
+        confidence: typeof f.confidence === 'number' ? f.confidence : undefined,
+        severity: f.severity,
+      })),
+      suspiciousTimestamps: timestamps.map((t) => ({
+        timestamp: t.timestamp,
+        note: t.label,
+        description: t.description,
+      })),
+      mediaMetadata: {
+        duration: typeof rawMeta.duration === 'number' ? rawMeta.duration : undefined,
+        hasVideo,
+        hasAudio,
+        hasImage,
+        hasTranscript,
+      },
+    }
+  }, [result?.metadata, section, videoFindings, audioFindings, imageFindings, transcriptFindings, timestamps])
+
+  const handleNavigateTimestamp = (seconds: number) => {
+    const videoEl = document.querySelector('video')
+    const audioEl = document.querySelector('audio')
+    const targetEl = videoEl || audioEl
+    if (targetEl) {
+      targetEl.currentTime = seconds
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      targetEl.play().catch(() => {
+        // Autoplay may be restricted without direct user gesture
+      })
+    }
+  }
 
   // PDF Report Downloader
   const handleDownloadPdfReport = () => {
@@ -413,11 +484,22 @@ export default function AnalysisResult({
         <div className="panel-subheading">
           <Layers className="h-4 w-4 text-cyan-400" />
           <div>
-            <h3>Cross-Modal Evidence Correlation</h3>
-            <p>Visual triangulation connecting Video, Audio, Extracted Transcript, and Suspicious Timestamps.</p>
+            <h3>Cross-Modal Evidence Correlation Engine</h3>
+            <p>Unified timeline, lip-sync validation, lexical alignment, and cross-modal inconsistency detection.</p>
           </div>
         </div>
-        <EvidenceGraph relationships={relationships} timestamps={timestamps} />
+
+        <MultimodalCorrelationPanel
+          correlationInput={correlationInput}
+          onNavigateTimestamp={handleNavigateTimestamp}
+        />
+
+        {relationships.length > 0 && (
+          <div className="correlation-topology-container mt-6">
+            <h4 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">Relational Graph Topology</h4>
+            <EvidenceGraph relationships={relationships} timestamps={timestamps} />
+          </div>
+        )}
       </div>
 
       {/* 3. EVIDENCE-LINKED FINDINGS */}
