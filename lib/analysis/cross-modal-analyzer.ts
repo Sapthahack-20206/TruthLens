@@ -8,9 +8,9 @@ import type {
   EvidenceRelationship,
   ForensicVisualization
 } from './types'
-import { analyzeImageEvidence } from './image-analyzer.ts'
-import { analyzeVideoEvidence } from './video-analyzer.ts'
-import { analyzeAudioEvidence } from './audio-analyzer.ts'
+import { analyzeImageEvidence } from './image-analyzer'
+import { analyzeVideoEvidence } from './video-analyzer'
+import { analyzeAudioEvidence } from './audio-analyzer'
 
 /**
  * Coordinates forensic analysis across multiple evidence files (images, audio, video, text)

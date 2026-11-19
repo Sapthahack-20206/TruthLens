@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { processUploadedEvidence } from './media-processor.ts'
+import { processUploadedEvidence } from './media-processor'
 import type { UploadedFileEvidence, MediaType, ForensicResponse } from './types'
-import { saveForensicResponse } from './investigation-store.ts'
+import { saveForensicResponse } from './investigation-store'
 
 export async function parseFormDataEvidence(
   req: NextRequest,

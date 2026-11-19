@@ -21,7 +21,7 @@ import {
   extractAudioFromVideo,
   cleanupEvidence,
   formatTime
-} from './media-processor.ts'
+} from './media-processor'
 
 const execFileAsync = promisify(execFile)
 

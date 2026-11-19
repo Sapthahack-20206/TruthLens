@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import fsp from 'node:fs/promises'
 import type {
   UploadedFileEvidence,
   MediaMetadata,
@@ -9,7 +10,7 @@ import type {
   DeepfakeImageDetectorInterface,
   DeepfakeModelResult
 } from './types'
-import { cleanupEvidence } from './media-processor.ts'
+import { cleanupEvidence } from './media-processor'
 
 /**
  * Searches for known AI model prompt metadata and digital manipulation signatures
@@ -372,7 +373,7 @@ export async function analyzeImageEvidence(
     }
 
     // 3. Deepfake Detection Model Evaluation
-    const modelResult = await model.analyzeVideo ? ({} as DeepfakeModelResult) : await model.analyzeImage(evidence.tempPath, metadata, buffer)
+    const modelResult = await model.analyzeImage(evidence.tempPath, metadata, buffer)
     if (modelResult.detectedSynthetic !== null) {
       indicators.push({
         id: `ind_${crypto.randomUUID().slice(0, 8)}`,

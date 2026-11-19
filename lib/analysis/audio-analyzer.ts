@@ -14,7 +14,7 @@ import type {
   SpeechTranscriptionResult,
   DeepfakeModelResult
 } from './types'
-import { cleanupEvidence, formatTime } from './media-processor.ts'
+import { cleanupEvidence, formatTime } from './media-processor'
 
 const execFileAsync = promisify(execFile)
 
