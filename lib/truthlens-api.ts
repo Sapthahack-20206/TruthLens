@@ -80,6 +80,7 @@ export type ForensicResponse = {
   id?: string
   investigationId?: string
   reportId?: string
+  mediaType?: 'video' | 'audio' | 'image' | 'multimodal'
   status?: string
   assessment?: string
   uncertaintyStatus?: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'

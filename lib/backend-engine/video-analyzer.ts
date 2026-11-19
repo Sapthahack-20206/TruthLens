@@ -56,14 +56,22 @@ function runPythonForensicAnalyzer(
   maxFrames = 60
 ): Promise<PythonForensicOutput | null> {
   return new Promise((resolve) => {
-    const scriptPath = path.join(__dirname, 'video_forensics.py')
-    if (!fs.existsSync(scriptPath)) {
+    const candidatePaths = [
+      path.join(process.cwd(), 'lib', 'backend-engine', 'video_forensics.py'),
+      path.join(__dirname, 'video_forensics.py'),
+      path.join(__dirname, '..', '..', 'lib', 'backend-engine', 'video_forensics.py'),
+      path.join(process.cwd(), 'video_forensics.py'),
+    ]
+    const scriptPath = candidatePaths.find((p) => fs.existsSync(p))
+    if (!scriptPath) {
+      console.warn('[VideoForensics] video_forensics.py not found in candidates:', candidatePaths)
       resolve(null)
       return
     }
 
+    const pyCmd = process.env.PYTHON_PATH || 'python'
     const pyProcess = spawn(
-      'python',
+      pyCmd,
       [scriptPath, videoPath, ffmpegPath, String(fps), String(maxFrames)],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
@@ -79,7 +87,8 @@ function runPythonForensicAnalyzer(
       stderr += chunk.toString()
     })
 
-    pyProcess.on('error', () => {
+    pyProcess.on('error', (err) => {
+      console.warn('[VideoForensics] Spawn error for python:', err.message)
       resolve(null)
     })
 
@@ -88,10 +97,12 @@ function runPythonForensicAnalyzer(
         try {
           const parsed = JSON.parse(stdout) as PythonForensicOutput
           resolve(parsed)
-        } catch {
+        } catch (parseErr) {
+          console.error('[VideoForensics] Failed to parse JSON stdout:', parseErr)
           resolve(null)
         }
       } else {
+        console.warn(`[VideoForensics] Python process exited with code ${code}. Stderr: ${stderr.slice(0, 300)}`)
         resolve(null)
       }
     })
@@ -252,16 +263,26 @@ export async function analyzeVideoEvidence(
         humanReviewRecommendation: 'Examine extracted keyframes for facial boundary jitter or sudden lighting discrepancies.',
       })
 
+      const fallbackTimeline: VideoForensicFrame[] = []
       let prevSize = 0
+      let totalDiff = 0
+      let diffCount = 0
+
       frameResult.extractedFrames.forEach((frameFile, index) => {
         try {
           const stats = fs.statSync(frameFile)
           const timestampSec = index * (1.0 / samplingFps)
           const timecode = formatTime(timestampSec)
+          let isSuspicious = false
+          const frameIndicators: string[] = []
 
           if (index > 0 && prevSize > 0) {
             const ratio = Math.abs(stats.size - prevSize) / prevSize
+            totalDiff += ratio
+            diffCount++
             if (ratio > 2.5) {
+              isSuspicious = true
+              frameIndicators.push('Compression Shift')
               suspiciousTimestamps.push({
                 timestamp: timecode,
                 seconds: timestampSec,
@@ -275,10 +296,37 @@ export async function analyzeVideoEvidence(
             }
           }
           prevSize = stats.size
+
+          let previewThumbnail: string | undefined
+          try {
+            const buf = fs.readFileSync(frameFile)
+            previewThumbnail = `data:image/jpeg;base64,${buf.toString('base64')}`
+          } catch {
+            // ignore
+          }
+
+          fallbackTimeline.push({
+            frameNumber: index + 1,
+            seconds: timestampSec,
+            timestamp: timecode,
+            isSuspicious,
+            anomalyCount: frameIndicators.length,
+            faceDetected: false,
+            indicators: frameIndicators,
+            previewThumbnail,
+          })
         } catch {
           // Skip unreadable frame
         }
       })
+
+      videoTimeline = fallbackTimeline
+      videoMetrics = {
+        totalFramesSampled: frameCount,
+        facesDetectedCount: 0,
+        averageInterframeDiff: diffCount > 0 ? Number((totalDiff / diffCount).toFixed(2)) : 0,
+        compressionVariance: 0.05,
+      }
     }
     cleanupTempFiles(framesDir)
   }

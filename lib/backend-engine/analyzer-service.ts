@@ -190,6 +190,7 @@ export async function processAndAnalyzeMedia(
       id: analysisId,
       investigationId,
       reportId,
+      mediaType: detectedModality === 'video' ? 'video' : detectedModality === 'audio' ? 'audio' : 'image',
       status: 'completed',
       assessment,
       uncertaintyStatus,

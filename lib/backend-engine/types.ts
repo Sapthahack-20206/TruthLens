@@ -94,6 +94,7 @@ export interface ForensicAnalysisOutput {
   id: string
   investigationId: string
   reportId: string
+  mediaType?: 'video' | 'audio' | 'image' | 'multimodal'
   status: 'completed' | 'processing' | 'failed'
   assessment: string
   uncertaintyStatus: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
