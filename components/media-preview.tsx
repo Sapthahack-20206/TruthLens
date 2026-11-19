@@ -65,6 +65,7 @@ interface MediaPreviewProps {
   onRemoveFile?: (index: number) => void
   onReplaceFile?: (index: number) => void
   onSyncContext?: (text: string) => void
+  response?: unknown
 }
 
 export default function MediaPreview({
@@ -74,6 +75,7 @@ export default function MediaPreview({
   onRemoveFile,
   onReplaceFile,
   onSyncContext,
+  response,
 }: MediaPreviewProps) {
   const [internalIndex, setInternalIndex] = useState(0)
   const [showAdvancedForensicPlayer, setShowAdvancedForensicPlayer] = useState(false)
@@ -131,7 +133,7 @@ export default function MediaPreview({
           </button>
           <span style={{ fontSize: '11px', color: '#666' }}>Interactive Forensic Player Active</span>
         </div>
-        <ForensicMediaPlayer file={currentFile} />
+        <ForensicMediaPlayer file={currentFile} forensicOutput={response as any} />
       </div>
     )
   }

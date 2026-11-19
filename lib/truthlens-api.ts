@@ -32,6 +32,19 @@ export type ForensicFinding = {
   humanReviewRecommendation?: string
 }
 
+export type VideoForensicFrame = {
+  frameNumber: number
+  seconds: number
+  timestamp: string
+  isSuspicious: boolean
+  anomalyCount: number
+  faceDetected: boolean
+  faceBoundingBox?: { x: number; y: number; width: number; height: number }
+  severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
+  indicators: string[]
+  previewThumbnail?: string
+}
+
 export type ForensicResponse = {
   id?: string
   investigationId?: string
@@ -42,12 +55,33 @@ export type ForensicResponse = {
   summary?: string
   metadata?: Record<string, string | number | boolean | null>
   findings?: ForensicFinding[]
-  suspiciousTimestamps?: { timestamp: string; seconds?: number; label?: string; description?: string; evidenceRef?: string; severity?: string }[]
+  suspiciousTimestamps?: {
+    timestamp: string
+    seconds?: number
+    frameNumber?: number
+    label?: string
+    description?: string
+    evidenceRef?: string
+    severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
+    anomalyType?: string
+    metricValue?: string
+    isHeuristic?: boolean
+    faceDetected?: boolean
+    faceBoundingBox?: { x: number; y: number; width: number; height: number }
+    previewThumbnail?: string
+  }[]
   suspiciousRegions?: { id: string; box: [number, number, number, number]; deepfakeProbability: number; label: string; description: string; confidence: number }[]
   evidenceRelationships?: { source: string; target: string; relationship: string; explanation?: string }[]
   visualizations?: { label: string; url: string }[]
   limitations?: string[]
   processingErrors?: string[]
+  videoTimeline?: VideoForensicFrame[]
+  videoMetrics?: {
+    totalFramesSampled: number
+    facesDetectedCount: number
+    averageInterframeDiff: number
+    compressionVariance: number
+  }
 }
 
 function formatApiError(detail: string, contentType: string | null, fallback: string) {

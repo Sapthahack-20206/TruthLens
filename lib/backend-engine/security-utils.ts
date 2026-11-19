@@ -20,7 +20,8 @@ const DANGEROUS_EXTENSIONS = new Set([
 export const ALLOWED_EXTENSIONS = new Set([
   '.mp4', '.mov', '.avi', '.webm',
   '.wav', '.mp3', '.m4a',
-  '.jpg', '.jpeg', '.png', '.webp'
+  '.jpg', '.jpeg', '.png', '.webp',
+  '.txt'
 ])
 
 export interface FileSignatureResult {
@@ -247,6 +248,26 @@ export function validateFileSignature(
       category: 'audio',
       detectedMime: 'audio/mpeg',
       normalizedExt: '.mp3',
+    }
+  }
+
+  // --- I. Plain Text / Transcript (.txt) ---
+  if (rawExt === '.txt') {
+    let isBinary = false
+    const checkLen = Math.min(buffer.length, 1024)
+    for (let i = 0; i < checkLen; i++) {
+      const byte = buffer[i]
+      if (byte === 0 || (byte < 7 && byte !== 9 && byte !== 10 && byte !== 13)) {
+        isBinary = true
+        break
+      }
+    }
+    if (!isBinary) {
+      return {
+        isValid: true,
+        detectedMime: 'text/plain',
+        normalizedExt: '.txt',
+      }
     }
   }
 

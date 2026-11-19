@@ -38,10 +38,37 @@ export interface DetectionIndicator {
 export interface SuspiciousTimestamp {
   timestamp: string
   seconds: number
+  frameNumber?: number
   label: string
   description: string
   evidenceRef?: string
   severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
+  anomalyType?: string
+  metricValue?: string
+  isHeuristic?: boolean
+  faceDetected?: boolean
+  faceBoundingBox?: { x: number; y: number; width: number; height: number }
+  previewThumbnail?: string
+}
+
+export interface VideoForensicFrame {
+  frameNumber: number
+  seconds: number
+  timestamp: string
+  isSuspicious: boolean
+  anomalyCount: number
+  faceDetected: boolean
+  faceBoundingBox?: { x: number; y: number; width: number; height: number }
+  severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
+  indicators: string[]
+  previewThumbnail?: string
+}
+
+export interface VideoForensicMetrics {
+  totalFramesSampled: number
+  facesDetectedCount: number
+  averageInterframeDiff: number
+  compressionVariance: number
 }
 
 export interface EvidenceRelationship {
@@ -79,6 +106,8 @@ export interface ForensicAnalysisOutput {
   processingErrors: string[]
   createdAt: string
   completedAt?: string
+  videoTimeline?: VideoForensicFrame[]
+  videoMetrics?: VideoForensicMetrics
 }
 
 // Model Interface specifications for external deepfake / synthetic models

@@ -108,10 +108,10 @@ export function executeMultimodalCorrelation(input: CorrelationInput): Correlati
   const timeline: TimelineEvent[] = []
 
   // Track stream presence
-  const hasVideo = (meta.mimeType?.startsWith('video/') || vFindings.length > 0 || rawTimestamps.length > 0)
-  const hasAudio = (meta.mimeType?.startsWith('audio/') || aFindings.length > 0 || meta.channels !== undefined)
-  const hasImage = (meta.mimeType?.startsWith('image/') || iFindings.length > 0)
-  const hasTranscript = (transcriptSegments.length > 0 || tFindings.length > 0)
+  const hasVideo = Boolean(meta.mimeType?.startsWith('video/') || vFindings.length > 0 || rawTimestamps.length > 0 || (meta as any).hasVideo)
+  const hasAudio = Boolean(meta.mimeType?.startsWith('audio/') || aFindings.length > 0 || meta.channels !== undefined || (meta as any).hasAudio)
+  const hasImage = Boolean(meta.mimeType?.startsWith('image/') || iFindings.length > 0 || (meta as any).hasImage)
+  const hasTranscript = Boolean(transcriptSegments.length > 0 || tFindings.length > 0 || (meta as any).hasTranscript)
 
   // 1. Separate Findings Organization
   const separateFindings = {

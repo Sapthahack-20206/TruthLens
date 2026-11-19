@@ -18,6 +18,24 @@ import { modelService } from './model-service'
 
 const execAsync = promisify(exec)
 
+export const ALLOWED_MIME_TYPES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/mp4',
+  'audio/x-m4a',
+  'audio/aac',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'text/plain',
+])
+
 export const TEMP_BASE_DIR = path.join(os.tmpdir(), 'truthlens-forensics')
 
 function ensureTempDir(): string {
@@ -184,6 +202,7 @@ export async function validateAndSaveMediaFile(
   }
 }
 
+
 function extractContainerMetadata(buffer: Buffer, ext: string, out: MediaMetadata) {
   try {
     if (ext === '.jpg' || ext === '.jpeg') {
@@ -224,20 +243,120 @@ function extractContainerMetadata(buffer: Buffer, ext: string, out: MediaMetadat
   }
 }
 
-export async function checkFfmpegAvailable(): Promise<boolean> {
+let cachedFfmpegPath: string | null = null
+
+export function getFfmpegPath(): string {
+  if (cachedFfmpegPath) return cachedFfmpegPath
+
   try {
-    await execAsync('ffmpeg -version')
+    // 1. Try ffmpeg-static package
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ffmpegStatic = require('ffmpeg-static')
+    if (ffmpegStatic && typeof ffmpegStatic === 'string' && fs.existsSync(ffmpegStatic)) {
+      cachedFfmpegPath = ffmpegStatic
+      return ffmpegStatic
+    }
+  } catch {
+    // Ignore and fallback
+  }
+
+  // 2. Try FFMPEG_PATH environment variable
+  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+    cachedFfmpegPath = process.env.FFMPEG_PATH
+    return cachedFfmpegPath
+  }
+
+  // 3. Fallback to system ffmpeg
+  cachedFfmpegPath = 'ffmpeg'
+  return 'ffmpeg'
+}
+
+export async function checkFfmpegAvailable(): Promise<boolean> {
+  const binary = getFfmpegPath()
+  try {
+    await execAsync(`"${binary}" -version`)
     return true
   } catch {
     return false
   }
 }
 
+export async function probeVideoMetadata(videoPath: string): Promise<{
+  duration?: number
+  resolution?: { width: number; height: number }
+  fps?: number
+  codec?: string
+  hasAudio?: boolean
+  error?: string
+}> {
+  const binary = getFfmpegPath()
+  try {
+    const { stderr } = await execAsync(`"${binary}" -i "${videoPath}"`)
+    return parseFfmpegStderr(stderr)
+  } catch (err: unknown) {
+    // ffmpeg -i exits with code 1 if no output is provided, but prints stream details in stderr
+    const errorObj = err as { stderr?: string; message?: string }
+    if (errorObj?.stderr) {
+      return parseFfmpegStderr(errorObj.stderr)
+    }
+    return { error: errorObj?.message || 'Failed to probe video stream metadata.' }
+  }
+}
+
+function parseFfmpegStderr(stderr: string): {
+  duration?: number
+  resolution?: { width: number; height: number }
+  fps?: number
+  codec?: string
+  hasAudio?: boolean
+  error?: string
+} {
+  if (stderr.includes('Invalid data found') || stderr.includes('moov atom not found')) {
+    return { error: 'Corrupted video container or invalid media header.' }
+  }
+
+  let duration: number | undefined
+  const durMatch = stderr.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d+)/)
+  if (durMatch) {
+    const hours = parseInt(durMatch[1], 10)
+    const mins = parseInt(durMatch[2], 10)
+    const secs = parseFloat(durMatch[3])
+    duration = hours * 3600 + mins * 60 + secs
+  }
+
+  let resolution: { width: number; height: number } | undefined
+  const resMatch = stderr.match(/Stream.*Video:.* (\d{3,5})x(\d{3,5})/)
+  if (resMatch) {
+    resolution = {
+      width: parseInt(resMatch[1], 10),
+      height: parseInt(resMatch[2], 10),
+    }
+  }
+
+  let fps: number | undefined
+  const fpsMatch = stderr.match(/(\d+(?:\.\d+)?)\s*fps/)
+  if (fpsMatch) {
+    fps = parseFloat(fpsMatch[1])
+  }
+
+  let codec: string | undefined
+  const codecMatch = stderr.match(/Video:\s*([a-zA-Z0-9_-]+)/)
+  if (codecMatch) {
+    codec = codecMatch[1]
+  }
+
+  const hasAudio = /Stream.*Audio:/.test(stderr)
+
+  return { duration, resolution, fps, codec, hasAudio }
+}
+
 export async function extractVideoFrames(
   videoPath: string,
   framesDir: string,
-  fps = 1
+  fps = 1,
+  maxFrames = 60
 ): Promise<{ extractedFrames: string[]; error?: string }> {
+  const binary = getFfmpegPath()
   // Validate path safety: must reside inside TEMP_BASE_DIR
   const resolvedVideo = path.resolve(videoPath)
   const resolvedFrames = path.resolve(framesDir)
@@ -255,7 +374,7 @@ export async function extractVideoFrames(
   if (!isAvailable) {
     // Intelligent fallback: Extract video frames via OpenCV Python engine
     try {
-      const openCvRes = await modelService.extractVideoFramesOpenCV(resolvedVideo, framesDir, safeFps, 45)
+      const openCvRes = await modelService.extractVideoFramesOpenCV(resolvedVideo, framesDir, safeFps, maxFrames)
       if (openCvRes.extractedFrames.length > 0) {
         return { extractedFrames: openCvRes.extractedFrames }
       }
@@ -276,7 +395,7 @@ export async function extractVideoFrames(
   }
 
   const outputPattern = path.join(framesDir, 'frame_%04d.jpg')
-  const cmd = `ffmpeg -i "${resolvedVideo}" -vf fps=${safeFps} -q:v 2 "${outputPattern}" -y`
+  const cmd = `"${binary}" -i "${resolvedVideo}" -vf fps=${safeFps} -q:v 2 -frames:v ${maxFrames} "${outputPattern}" -y`
 
   try {
     await execAsync(cmd)
@@ -297,6 +416,7 @@ export async function extractAudioTrack(
   videoPath: string,
   outputAudioPath: string
 ): Promise<{ audioPath?: string; error?: string }> {
+  const binary = getFfmpegPath()
   const resolvedVideo = path.resolve(videoPath)
   const resolvedAudio = path.resolve(outputAudioPath)
   if (!resolvedVideo.startsWith(TEMP_BASE_DIR) || !resolvedAudio.startsWith(TEMP_BASE_DIR)) {
@@ -312,7 +432,7 @@ export async function extractAudioTrack(
     }
   }
 
-  const cmd = `ffmpeg -i "${resolvedVideo}" -vn -acodec pcm_s16le -ar 44100 -ac 2 "${resolvedAudio}" -y`
+  const cmd = `"${binary}" -i "${resolvedVideo}" -vn -acodec pcm_s16le -ar 44100 -ac 2 "${resolvedAudio}" -y`
   try {
     await execAsync(cmd)
     if (fs.existsSync(resolvedAudio) && fs.statSync(resolvedAudio).size > 0) {

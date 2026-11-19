@@ -69,6 +69,8 @@ export async function processAndAnalyzeMedia(
     const allVisualizations: Array<{ label: string; url: string }> = []
     const allLimitations: string[] = []
     const allErrors: string[] = []
+    let videoTimeline: import('./types').VideoForensicFrame[] | undefined
+    let videoMetrics: import('./types').VideoForensicMetrics | undefined
 
     // 2. Run Modality Analysis
     if (detectedModality === 'video') {
@@ -80,6 +82,8 @@ export async function processAndAnalyzeMedia(
       }
       allLimitations.push(...videoRes.limitations)
       allErrors.push(...videoRes.processingErrors)
+      videoTimeline = videoRes.videoTimeline
+      videoMetrics = videoRes.videoMetrics
 
       // If an audio stream was extracted from the video, analyze it too (Tri-modal correlation!)
       if (videoRes.extractedAudioPath) {
@@ -187,6 +191,8 @@ export async function processAndAnalyzeMedia(
       processingErrors: allErrors,
       createdAt: now,
       completedAt: new Date().toISOString(),
+      videoTimeline,
+      videoMetrics,
     }
 
     // Save to stores

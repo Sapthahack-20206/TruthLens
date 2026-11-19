@@ -3,8 +3,39 @@
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import useSWR from 'swr'
-import { Activity, AlertCircle, ArrowDown, ArrowRight, AudioLines, Bell, Check, ChevronDown, CircleHelp, Clock3, FileImage, FileSearch, FileText, Fingerprint, Image as ImageIcon, LoaderCircle, Menu, Plus, Search, ShieldCheck, Upload, UserRound, Video, X } from 'lucide-react'
+import useSWR, { mutate } from 'swr'
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  ArrowDown,
+  ArrowRight,
+  AudioLines,
+  Bell,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  Clock3,
+  FileCheck,
+  FileImage,
+  FileSearch,
+  FileText,
+  Fingerprint,
+  Image as ImageIcon,
+  LoaderCircle,
+  Menu,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  UserRound,
+  Video,
+  X,
+} from 'lucide-react'
 import { analyzeAudio, analyzeCrossModal, analyzeImage, analyzeVideo, getInvestigation, getReport, listInvestigations, type InvestigationRecord } from '@/lib/truthlens-api'
 import AnalysisResult from '@/components/analysis-result'
 import MediaPreview, { useMediaPreviewUrl } from '@/components/media-preview'
@@ -59,14 +90,20 @@ function EmptyState({ title, text, action }: { title: string; text: string; acti
   return <div className="empty-state"><span className="empty-state-icon"><FileSearch aria-hidden="true" /></span><h3>{title}</h3><p>{text}</p>{action}</div>
 }
 
+type AnalysisLifecycle = 'idle' | 'validating' | 'uploading' | 'processing' | 'success' | 'partial-success' | 'failed'
+
 function UploadWorkspace({ section }: { section: string }) {
   const [files, setFiles] = useState<File[]>([])
   const [activeFileIndex, setActiveFileIndex] = useState(0)
   const [context, setContext] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<number | null>(null)
+  const [analysisStatus, setAnalysisStatus] = useState<AnalysisLifecycle>('idle')
   const [message, setMessage] = useState('')
   const [response, setResponse] = useState<unknown>(null)
+  const isSubmittingRef = useRef<boolean>(false)
+  const resultsRef = useRef<HTMLDivElement>(null)
+
   const config = supportedTypes[section] ?? supportedTypes['cross-modal']
   const sourcePreviewUrl = useMediaPreviewUrl(section === 'image-analysis' ? files[0] : undefined)
   const isCrossModal = section === 'cross-modal'
@@ -76,6 +113,7 @@ function UploadWorkspace({ section }: { section: string }) {
     setFiles(newFiles)
     setResponse(null)
     setMessage('')
+    setAnalysisStatus('idle')
     if (activeFileIndex >= newFiles.length) {
       setActiveFileIndex(Math.max(0, newFiles.length - 1))
     }
@@ -85,9 +123,23 @@ function UploadWorkspace({ section }: { section: string }) {
     const updated = files.filter((_, idx) => idx !== index)
     setFiles(updated)
     setResponse(null)
+    setMessage('')
+    setAnalysisStatus('idle')
     if (activeFileIndex >= updated.length) {
       setActiveFileIndex(Math.max(0, updated.length - 1))
     }
+  }
+
+  const handleReset = () => {
+    setFiles([])
+    setContext('')
+    setResponse(null)
+    setMessage('')
+    setProgress(null)
+    setAnalysisStatus('idle')
+    setActiveFileIndex(0)
+    isSubmittingRef.current = false
+    setBusy(false)
   }
 
   const handleSyncContext = (transcriptText: string) => {
@@ -100,16 +152,51 @@ function UploadWorkspace({ section }: { section: string }) {
   }
 
   const submit = async () => {
+    // 1. Synchronously prevent duplicate concurrent submissions
+    if (isSubmittingRef.current || busy) {
+      return
+    }
+
+    // 2. Validate staged files
     if (!files.length) {
       setMessage('Stage at least one supported digital evidence file to proceed.')
       return
     }
+
+    const maxSizeBytes = 100 * 1024 * 1024
+    for (const f of files) {
+      if (f.size === 0) {
+        setMessage(`The file "${f.name}" is empty (0 bytes). Please upload a valid media file.`)
+        return
+      }
+      if (f.size > maxSizeBytes) {
+        setMessage(`The file "${f.name}" exceeds the maximum 100 MB limit (${(f.size / 1024 / 1024).toFixed(1)} MB).`)
+        return
+      }
+      const ext = f.name.split('.').pop()?.toLowerCase() || ''
+      const allowed = acceptedExtensions[section] || acceptedExtensions['cross-modal']
+      if (allowed && !allowed.includes(ext)) {
+        setMessage(`The format ".${ext}" is not supported for ${config.label.toLowerCase()} analysis. Supported formats: ${config.extensions}.`)
+        return
+      }
+    }
+
+    // 3. Initiate analysis workflow
+    isSubmittingRef.current = true
     setBusy(true)
     setProgress(0)
     setMessage('')
-    setResponse(null)
+    setAnalysisStatus('uploading')
+
     try {
-      const onProgress = (value: number) => setProgress(value)
+      const onProgress = (percentage: number) => {
+        setProgress(percentage)
+        if (percentage >= 100) {
+          setAnalysisStatus('processing')
+        }
+      }
+
+      // Execute respective modality API
       const result = section === 'image-analysis'
         ? await analyzeImage(files[0], context, onProgress)
         : section === 'video-analysis'
@@ -117,14 +204,35 @@ function UploadWorkspace({ section }: { section: string }) {
           : section === 'audio-analysis'
             ? await analyzeAudio(files[0], context, onProgress)
             : await analyzeCrossModal(files, context, onProgress)
-      setResponse(result)
+
       setProgress(100)
-      setMessage('The configured analysis service responded. Only returned evidence is shown below.')
+      setResponse(result)
+
+      // Refresh global investigations cache
+      mutate('truthlens-investigations').catch(() => {})
+
+      // Check result state: failed, partial-success, or success
+      if (result && typeof result === 'object' && 'status' in result && result.status === 'failed') {
+        setAnalysisStatus('failed')
+        setMessage(result.summary || 'Analysis could not be completed on this evidence. Review processing notices.')
+      } else if (result && typeof result === 'object' && Array.isArray((result as any).processingErrors) && (result as any).processingErrors.length > 0) {
+        setAnalysisStatus('partial-success')
+        setMessage('Analysis completed with technical notices. Empirical findings and timeline are displayed below.')
+      } else {
+        setAnalysisStatus('success')
+        setMessage('Forensic analysis completed. Empirical findings, correlation matrix, and timeline are presented below.')
+      }
+
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 150)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'The analysis service is unavailable.')
+      setAnalysisStatus('failed')
+      setMessage(error instanceof Error ? error.message : 'The analysis service is unavailable. Please verify connection and retry.')
       setProgress(null)
     } finally {
       setBusy(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -159,6 +267,7 @@ function UploadWorkspace({ section }: { section: string }) {
             onSelectIndex={setActiveFileIndex}
             onRemoveFile={handleRemoveFile}
             onSyncContext={handleSyncContext}
+            response={response}
           />
         )}
 
@@ -170,25 +279,126 @@ function UploadWorkspace({ section }: { section: string }) {
           onChange={(event) => setContext(event.target.value)}
           placeholder="Add a caption, verified transcript, or investigation notes for this media..."
           rows={4}
+          disabled={busy}
         />
 
-        {progress !== null && (
+        {progress !== null && busy && (
           <div className="upload-progress" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
-            <span>{busy && progress < 100 ? 'Uploading source' : busy ? 'Processing response' : 'Upload complete'}</span>
+            <span>
+              {analysisStatus === 'processing'
+                ? 'Signal extraction & multimodal correlation in progress…'
+                : progress < 100
+                ? `Uploading evidence stream (${progress}%)`
+                : 'Finalizing analytical report…'}
+            </span>
             <span className="upload-progress-track"><span style={{ width: `${progress}%` }} /></span>
             <span>{progress}%</span>
           </div>
         )}
 
-        {message && <p className="form-feedback" role="status">{message}</p>}
+        {message && (
+          <div
+            className={`form-feedback ${
+              analysisStatus === 'failed'
+                ? 'error-banner'
+                : analysisStatus === 'partial-success'
+                ? 'warning-banner'
+                : analysisStatus === 'success'
+                ? 'success-banner'
+                : ''
+            }`}
+            role="status"
+            style={{
+              padding: '10px 14px',
+              borderRadius: '8px',
+              marginTop: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              fontSize: '12px',
+              lineHeight: 1.45,
+              background:
+                analysisStatus === 'failed'
+                  ? 'rgba(239, 68, 68, 0.1)'
+                  : analysisStatus === 'partial-success'
+                  ? 'rgba(245, 158, 11, 0.1)'
+                  : analysisStatus === 'success'
+                  ? 'rgba(16, 185, 129, 0.1)'
+                  : undefined,
+              border:
+                analysisStatus === 'failed'
+                  ? '1px solid rgba(239, 68, 68, 0.3)'
+                  : analysisStatus === 'partial-success'
+                  ? '1px solid rgba(245, 158, 11, 0.3)'
+                  : analysisStatus === 'success'
+                  ? '1px solid rgba(16, 185, 129, 0.3)'
+                  : undefined,
+              color:
+                analysisStatus === 'failed'
+                  ? '#fca5a5'
+                  : analysisStatus === 'partial-success'
+                  ? '#fcd34d'
+                  : analysisStatus === 'success'
+                  ? '#6ee7b7'
+                  : undefined,
+            }}
+          >
+            {analysisStatus === 'failed' && <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />}
+            {analysisStatus === 'partial-success' && <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />}
+            {analysisStatus === 'success' && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />}
+            <span style={{ flex: 1 }}>{message}</span>
+          </div>
+        )}
 
-        <div className="upload-actions">
+        <div className="upload-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '16px' }}>
           <span className="privacy-note"><ShieldCheck aria-hidden="true" /> Files are sent only to the configured backend endpoint.</span>
-          <button className="button button-dark" type="button" onClick={submit} disabled={busy || files.length === 0}>
-            {busy ? <LoaderCircle className="spinning" /> : null}
-            {busy ? 'Analyzing…' : `Start ${config.label.toLowerCase()} analysis`}
-            {!busy && <ArrowRight />}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {analysisStatus === 'failed' && (
+              <>
+                <button
+                  className="button button-outline"
+                  type="button"
+                  onClick={handleReset}
+                  title="Clear files and reset investigation"
+                >
+                  <RotateCcw className="h-4 w-4" /> Clear
+                </button>
+                <button
+                  className="button button-dark"
+                  type="button"
+                  onClick={submit}
+                  disabled={busy || files.length === 0}
+                  title="Retry analysis on current evidence"
+                >
+                  <RefreshCw className={`h-4 w-4 ${busy ? 'spinning' : ''}`} /> Retry analysis
+                </button>
+              </>
+            )}
+
+            {(analysisStatus === 'success' || analysisStatus === 'partial-success') && (
+              <button
+                className="button button-outline"
+                type="button"
+                onClick={handleReset}
+                title="Start a new investigation"
+              >
+                <Plus className="h-4 w-4" /> New investigation
+              </button>
+            )}
+
+            {analysisStatus !== 'failed' && (
+              <button
+                className="button button-dark"
+                type="button"
+                onClick={submit}
+                disabled={busy || files.length === 0}
+              >
+                {busy ? <LoaderCircle className="spinning" /> : null}
+                {busy ? 'Analyzing…' : `Start ${config.label.toLowerCase()} analysis`}
+                {!busy && <ArrowRight />}
+              </button>
+            )}
+          </div>
         </div>
       </section>
 
@@ -206,7 +416,9 @@ function UploadWorkspace({ section }: { section: string }) {
         </div>
       </aside>
     </div>
-    {response !== null && <AnalysisResult response={response} section={config.label} sourcePreviewUrl={sourcePreviewUrl ?? undefined} />}
+    <div ref={resultsRef}>
+      {response !== null && <AnalysisResult response={response} section={config.label} sourcePreviewUrl={sourcePreviewUrl ?? undefined} />}
+    </div>
   </>
 }
 
