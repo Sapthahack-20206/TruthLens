@@ -34,7 +34,7 @@ import {
 import TruthLensRobot from '@/components/truthlens-robot'
 import JudgeDemoGuide from '@/components/judge-demo-guide'
 import { createInvestigation } from '@/lib/truthlens-api'
-import { DEMO_PRESETS, loadDemoSampleFile, loadDemoMultimodalBundle, JUDGE_DEMO_STEPS } from '@/lib/demo-samples'
+import { JUDGE_DEMO_STEPS } from '@/lib/demo-samples'
 
 const LOGO_URL = 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/TruthLens%20Aperture%20Logo-Zh8uJ1dIwq1yd1IEsjzn4BDgWzmMQA.png'
 
@@ -63,7 +63,6 @@ export default function TruthLensLanding() {
   const [error, setError] = useState('')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [showJudgeGuide, setShowJudgeGuide] = useState(false)
-  const [loadingPreset, setLoadingPreset] = useState<string | null>(null)
 
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return
@@ -71,29 +70,9 @@ export default function TruthLensLanding() {
     setError('')
   }
 
-  const handleLoadPreset = async (presetKey: 'video' | 'audio' | 'image' | 'cross-modal') => {
-    setLoadingPreset(presetKey)
-    setError('')
-    try {
-      if (presetKey === 'cross-modal') {
-        const { files: bundleFiles, context } = await loadDemoMultimodalBundle()
-        setFiles(bundleFiles)
-        setPrompt(context)
-      } else {
-        const file = await loadDemoSampleFile(presetKey)
-        setFiles([file])
-        setPrompt(DEMO_PRESETS[presetKey].context)
-      }
-    } catch {
-      setError('Unable to load demo sample file from server. You can select local files using the upload button.')
-    } finally {
-      setLoadingPreset(null)
-    }
-  }
-
   const startInvestigation = async () => {
     if (!files.length) {
-      setError('Choose at least one file or select a Hackathon Demo Preset to start.')
+      setError('Choose at least one file to start.')
       fileInput.current?.click()
       return
     }
@@ -165,62 +144,12 @@ export default function TruthLensLanding() {
         </div>
 
         <div className="prompt-card" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files) }}>
-          {/* Quick Hackathon Demo Presets Strip */}
-          <div className="landing-preset-strip">
-            <span className="preset-label">
-              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-              <strong>1-Click Hackathon Presets:</strong>
-            </span>
-            <div className="preset-buttons">
-              <button
-                type="button"
-                className="btn-preset-pill vid"
-                onClick={() => handleLoadPreset('video')}
-                disabled={loadingPreset !== null || busy}
-                title="Load 10s 720p interview video deepfake"
-              >
-                <Video className="h-3.5 w-3.5 text-sky-400" />
-                <span>{loadingPreset === 'video' ? 'Loading…' : 'Video Deepfake (MP4)'}</span>
-              </button>
-              <button
-                type="button"
-                className="btn-preset-pill aud"
-                onClick={() => handleLoadPreset('audio')}
-                disabled={loadingPreset !== null || busy}
-                title="Load 16kHz speech sample with silence gap drops"
-              >
-                <AudioLines className="h-3.5 w-3.5 text-indigo-400" />
-                <span>{loadingPreset === 'audio' ? 'Loading…' : 'Voice Clone (WAV)'}</span>
-              </button>
-              <button
-                type="button"
-                className="btn-preset-pill img"
-                onClick={() => handleLoadPreset('image')}
-                disabled={loadingPreset !== null || busy}
-                title="Load high-res portrait for ELA inspection"
-              >
-                <FileImage className="h-3.5 w-3.5 text-rose-400" />
-                <span>{loadingPreset === 'image' ? 'Loading…' : 'Portrait Keyframe (JPG)'}</span>
-              </button>
-              <button
-                type="button"
-                className="btn-preset-pill multi"
-                onClick={() => handleLoadPreset('cross-modal')}
-                disabled={loadingPreset !== null || busy}
-                title="Load synchronized Video + Audio + Transcript bundle"
-              >
-                <Fingerprint className="h-3.5 w-3.5 text-emerald-400" />
-                <span>{loadingPreset === 'cross-modal' ? 'Loading…' : 'Tri-Modal Case Bundle'}</span>
-              </button>
-            </div>
-          </div>
-
           <label className="sr-only" htmlFor="investigation-prompt">Describe the media you want to investigate</label>
           <textarea
             id="investigation-prompt"
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Describe or upload the media you want to investigate, or click a preset above..."
+            placeholder="Describe or upload the media you want to investigate..."
             rows={2}
           />
           {files.length > 0 && (
