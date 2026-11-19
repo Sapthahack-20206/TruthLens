@@ -89,16 +89,21 @@ export default function AnalysisHistory({
         }
 
         // Status filter
-        if (statusFilter === 'review' && rec.requiresReview !== true) {
+        const statusLower = (rec.status || 'completed').toLowerCase()
+        const isFailed = statusLower === 'failed' || statusLower === 'error'
+        const isPending = statusLower === 'pending' || statusLower === 'processing'
+        const isReview = rec.requiresReview === true || statusLower === 'requires-review' || statusLower === 'flagged'
+
+        if (statusFilter === 'review' && !isReview) {
           return false
         }
-        if (statusFilter === 'clean' && rec.requiresReview !== false) {
+        if (statusFilter === 'clean' && (isReview || isFailed || isPending)) {
           return false
         }
-        if (statusFilter === 'completed' && rec.status.toLowerCase() !== 'completed') {
+        if (statusFilter === 'completed' && (isFailed || isPending)) {
           return false
         }
-        if (statusFilter === 'failed' && rec.status.toLowerCase() !== 'failed') {
+        if (statusFilter === 'failed' && !isFailed) {
           return false
         }
 
@@ -290,21 +295,24 @@ export default function AnalysisHistory({
                 </td>
               </tr>
             ) : paginatedRecords.length > 0 ? (
-              paginatedRecords.map((rec) => {
+              paginatedRecords.map((rec, rIdx) => {
                 const Icon = rec.mediaType === 'video'
                   ? Video
                   : rec.mediaType === 'audio'
                     ? AudioLines
                     : ImageIcon
 
-                const isReview = rec.requiresReview === true
-                const isFailed = rec.status.toLowerCase() === 'failed'
+                const statusLower = (rec.status || 'completed').toLowerCase()
+                const isFailed = statusLower === 'failed' || statusLower === 'error'
+                const isPending = statusLower === 'pending' || statusLower === 'processing'
+                const isReview = rec.requiresReview === true || statusLower === 'requires-review' || statusLower === 'flagged'
+                const effectiveReportId = rec.reportId || (rec.id.startsWith('inv-') ? rec.id.replace('inv-', 'rep-') : rec.id)
 
                 return (
-                  <tr key={rec.id} className="history-table-row">
+                  <tr key={`${rec.id}-${rIdx}`} className="history-table-row">
                     {/* Column 1: Evidence / File */}
                     <td className="td-file-info">
-                      <div className="file-info-cluster">
+                      <div className="file-info-cluster" title={`File: ${rec.filename} (${rec.mediaType.toUpperCase()})`}>
                         <span className={`file-type-avatar ${rec.mediaType}`}>
                           <Icon className="h-4 w-4" />
                         </span>
@@ -312,7 +320,7 @@ export default function AnalysisHistory({
                           <strong className="table-filename" title={rec.filename}>
                             {rec.filename}
                           </strong>
-                          <span className="table-rec-id">{rec.id}</span>
+                          <span className="table-rec-id" title={`Investigation ID: ${rec.id}`}>{rec.id}</span>
                         </div>
                       </div>
                     </td>
@@ -336,13 +344,18 @@ export default function AnalysisHistory({
                     <td className="td-status">
                       <span
                         className={`status-indicator-badge ${
-                          isFailed ? 'failed' : isReview ? 'review' : 'clean'
+                          isFailed ? 'failed' : isPending ? 'pending' : isReview ? 'review' : 'clean'
                         }`}
                       >
                         {isFailed ? (
                           <>
                             <X className="h-3 w-3 mr-1" />
                             Failed
+                          </>
+                        ) : isPending ? (
+                          <>
+                            <RefreshCw className="h-3 w-3 mr-1 spinning" />
+                            Processing
                           </>
                         ) : isReview ? (
                           <>
@@ -360,8 +373,11 @@ export default function AnalysisHistory({
 
                     {/* Column 5: Assessment */}
                     <td className="td-assessment">
-                      <p className="table-assessment-text" title={rec.assessment}>
-                        {rec.assessment || 'Analysis completed with model telemetry.'}
+                      <p
+                        className="table-assessment-text"
+                        title={rec.assessment || (rec.uncertaintyStatus ? `Veracity Status: ${rec.uncertaintyStatus}` : 'Analysis completed with verified analytical output parameters.')}
+                      >
+                        {rec.assessment || (rec.uncertaintyStatus ? `Verdict: ${rec.uncertaintyStatus}` : 'Analysis completed with verified analytical output parameters.')}
                       </p>
                     </td>
 
@@ -374,11 +390,11 @@ export default function AnalysisHistory({
                         >
                           View Results
                         </Link>
-                        {rec.reportId && (
+                        {effectiveReportId && (
                           <Link
-                            href={`/workspace?section=reports&report=${encodeURIComponent(rec.reportId)}`}
+                            href={`/workspace?section=reports&report=${encodeURIComponent(effectiveReportId)}`}
                             className="btn-table-report"
-                            title="Open certified PDF report"
+                            title={`Open certified PDF report for ${rec.filename}`}
                           >
                             <FileText className="h-3.5 w-3.5" />
                             <span>PDF</span>

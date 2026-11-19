@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { logger } from './logger'
+import { resolveSupabaseUrl, resolveSupabaseKey } from './database'
 import type { ForensicAnalysisOutput } from './types'
 import type { InvestigationRecord, UserInvestigationStats } from './investigation-store'
 
@@ -62,8 +63,8 @@ class DatabaseManager {
   }
 
   private initClient() {
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
+    const supabaseUrl = resolveSupabaseUrl()
+    const supabaseKey = resolveSupabaseKey()
 
     if (supabaseUrl && supabaseKey && supabaseUrl.startsWith('http')) {
       try {

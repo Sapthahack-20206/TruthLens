@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import crypto from 'node:crypto'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import { databaseService } from './database'
+import { databaseService, resolveSupabaseUrl, resolveSupabaseKey } from './database'
 import { logger } from './logger'
 import {
   MAX_FILE_SIZE_BYTES,
@@ -109,8 +109,8 @@ export class CloudStorageService {
   }
 
   private initSupabase() {
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
+    const supabaseUrl = resolveSupabaseUrl()
+    const supabaseKey = resolveSupabaseKey()
 
     if (supabaseUrl && supabaseKey && supabaseUrl.startsWith('http')) {
       try {
@@ -129,6 +129,10 @@ export class CloudStorageService {
       this.supabase = null
       this.isCloudConfigured = false
     }
+  }
+
+  isConfigured(): boolean {
+    return this.getStatus().configured
   }
 
   getStatus(): { configured: boolean; bucket: string; provider: string } {
@@ -245,8 +249,8 @@ export class CloudStorageService {
     ]
 
     for (const candidate of localCandidates) {
-      if (fs.existsSync(candidate)) {
-        const buf = fs.readFileSync(candidate)
+      if (fs.existsSync(/*turbopackIgnore: true*/ candidate)) {
+        const buf = fs.readFileSync(/*turbopackIgnore: true*/ candidate)
         return { data: buf, contentType }
       }
     }
@@ -292,10 +296,10 @@ export class CloudStorageService {
     ]
 
     for (const candidate of localCandidates) {
-      if (fs.existsSync(candidate)) {
-        const stats = fs.statSync(candidate)
+      if (fs.existsSync(/*turbopackIgnore: true*/ candidate)) {
+        const stats = fs.statSync(/*turbopackIgnore: true*/ candidate)
         return {
-          stream: fs.createReadStream(candidate),
+          stream: fs.createReadStream(/*turbopackIgnore: true*/ candidate),
           contentType,
           contentLength: stats.size,
         }

@@ -364,8 +364,8 @@ export default function ExplainableEvidenceViewer({
           </div>
 
           <div className="regions-cards-grid">
-            {suspiciousRegions.map((region) => (
-              <div key={region.id} className="region-inspect-card">
+            {suspiciousRegions.map((region, rIdx) => (
+              <div key={`${region.id}-${rIdx}`} className="region-inspect-card">
                 <div className="region-card-top">
                   <span className="region-label">{region.label}</span>
                   <span className="region-conf-badge">
@@ -448,7 +448,7 @@ export default function ExplainableEvidenceViewer({
 
               return (
                 <article
-                  key={findingId}
+                  key={`${findingId}-${idx}`}
                   className={`evidence-card-expandable severity-${finding.severity ?? 'info'} ${isExpanded ? 'is-expanded' : ''}`}
                 >
                   {/* Card Header: Always Visible Summary */}

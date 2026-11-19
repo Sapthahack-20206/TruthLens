@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import {
   Activity,
@@ -447,14 +447,14 @@ function Reports({ initialId }: { initialId: string }) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [reportUrl, setReportUrl] = useState<string | null>(null)
+  const hasAutoLoaded = useRef<string | null>(null)
 
   useEffect(() => () => {
     if (reportUrl) URL.revokeObjectURL(reportUrl)
   }, [reportUrl])
 
-  const download = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const id = reportId.trim()
+  const executeDownload = useCallback(async (targetId: string) => {
+    const id = targetId.trim()
     if (!id) {
       setMessage('Enter a report ID returned by an investigation.')
       return
@@ -481,6 +481,19 @@ function Reports({ initialId }: { initialId: string }) {
     } finally {
       setBusy(false)
     }
+  }, [])
+
+  useEffect(() => {
+    if (initialId && initialId.trim() && hasAutoLoaded.current !== initialId.trim()) {
+      hasAutoLoaded.current = initialId.trim()
+      setReportId(initialId.trim())
+      executeDownload(initialId.trim())
+    }
+  }, [initialId, executeDownload])
+
+  const download = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    executeDownload(reportId)
   }
 
   return (

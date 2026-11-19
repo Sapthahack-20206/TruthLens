@@ -202,7 +202,7 @@ export default function EvidenceGraph({ relationships = [], timestamps = [] }: E
 
               return (
                 <div
-                  key={item.id}
+                  key={`${item.id}-${idx}`}
                   className={`correlation-link-card ${isSelected ? 'active' : ''}`}
                   onClick={() => setSelectedIndex(idx)}
                   role="button"

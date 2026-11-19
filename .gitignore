@@ -41,4 +41,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Temporary benchmark files
+tmp/
+
+
 

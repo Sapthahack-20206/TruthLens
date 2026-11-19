@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authService } from '@/lib/backend-engine/auth-service'
 
 export async function GET(req: NextRequest) {
-  const authContext = authService.getAuthContext(req)
+  const authContext = await authService.getAuthContextAsync(req)
 
   const response = NextResponse.json(
     {

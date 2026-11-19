@@ -7,6 +7,11 @@ computes inter-frame temporal continuity, and produces structured forensic telem
 
 import os
 import sys
+
+# Suppress noisy OpenCV / FFmpeg C++ warnings before importing cv2
+os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
+os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
+
 import json
 import base64
 import math
@@ -15,6 +20,8 @@ import numpy as np
 
 try:
     import cv2
+    if hasattr(cv2, 'utils') and hasattr(cv2.utils, 'logging'):
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
 except ImportError:
     cv2 = None
 

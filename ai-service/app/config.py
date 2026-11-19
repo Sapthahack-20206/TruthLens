@@ -19,6 +19,7 @@ def get_models_dir() -> Path:
 MODELS_DIR = get_models_dir()
 VIT_MODEL_PATH = MODELS_DIR / "deepfake_vit_quantized.onnx"
 YUNET_MODEL_PATH = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
+AASIST_MODEL_PATH = MODELS_DIR / "aasist.onnx"
 
 # Backup YuNet name check
 if not YUNET_MODEL_PATH.exists() and (MODELS_DIR / "face_detection_yunet.onnx").exists():

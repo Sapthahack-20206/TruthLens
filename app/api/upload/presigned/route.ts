@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const { effectiveUserId } = authService.getAuthContext(req)
+    const { effectiveUserId } = await authService.getAuthContextAsync(req)
 
     const contentType = req.headers.get('content-type') || ''
     if (!contentType.includes('application/json')) {

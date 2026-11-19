@@ -5,7 +5,7 @@ import { authService, AUTH_COOKIE_NAME } from '@/lib/backend-engine/auth-service
 export async function POST(req: NextRequest) {
   const token = req.cookies.get(AUTH_COOKIE_NAME)?.value
   if (token) {
-    authService.deleteSession(token)
+    await authService.deleteSessionAsync(token)
   }
 
   const response = NextResponse.json(

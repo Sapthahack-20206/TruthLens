@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { logger } from './logger'
 import { ARTIFACTS_TEMP_DIR } from './cloud-storage'
+import type { AudioForensicMetrics, AudioForensicSegment } from './types'
 
 const execFileAsync = promisify(execFile)
 
@@ -24,13 +25,34 @@ export interface ModelImageResult {
   deepfakeProbability: number
   realProbability: number
   confidence: number
-  predictedLabel: 'Deepfake' | 'Real'
+  predictedLabel: string
   assessment: string
-  uncertaintyStatus: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
+  uncertaintyStatus:
+    | 'Likely AI-Generated'
+    | 'Likely Manipulated'
+    | 'No Significant Indicators Detected'
+    | 'Inconclusive'
+    | 'Potentially Manipulated'
+    | 'Requires Further Review'
   facesCount: number
   faces: Array<{ box: [number, number, number, number]; confidence: number }>
   suspiciousRegions: SuspiciousRegion[]
   visualizations: Array<{ label: string; url: string }>
+  forensicMetrics?: {
+    neuralDeepfakeProb?: number
+    fftSpikeScore?: number
+    fftEnergyRatio?: number
+    noiseInconsistency?: number
+    meanNoiseVar?: number
+    elaMeanDiff?: number
+    elaMaxDiff?: number
+    hasPeriodicArtifacts?: boolean
+    hasNoiseDisparity?: boolean
+    hasElaDiscrepancy?: boolean
+    hasMetadataProvenance?: boolean
+    isGenerativeProvenance?: boolean
+    softwareSignatures?: string[]
+  }
   limitations: string[]
   message?: string
 }
@@ -72,10 +94,33 @@ export interface ModelAudioResult {
   channels: number
   durationSec: number
   syntheticProbability: number
+  authenticProbability?: number
+  confidence?: number
+  predictedLabel?: string
+  uncertaintyStatus?: string
+  assessment?: string
+  modelName?: string
+  modelVersion?: string
   highFreqRatio: number
   spectralFlux: number
+  spectralFlatness?: number
+  snrDb?: number
+  voiceActivityRatio?: number
+  phaseInconsistency?: number
+  jitterPercent?: number
+  shimmerPercent?: number
+  highFreqCutoffHz?: number
   reasons: string[]
+  segments?: AudioForensicSegment[]
+  suspiciousTimestamps?: Array<{
+    timestamp: string
+    seconds: number
+    label: string
+    description: string
+    severity: 'critical' | 'high' | 'moderate' | 'low' | 'info'
+  }>
   visualizations: Array<{ label: string; url: string }>
+  mfccMeanVector?: number[]
   limitations: string[]
   message?: string
 }
@@ -243,16 +288,16 @@ export class ModelService {
 
     // 2. Local Python Execution Fallback
     if (this.aiServiceUrl && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
-      logger.error('CRITICAL: Remote AI image inference failed or is not configured in production. Local Python fallback is disabled.')
+      logger.error('CRITICAL: Remote AI image inference failed and ALLOW_LOCAL_AI_FALLBACK is disabled.')
       return null
     }
 
+    const pythonBin = process.env.PYTHON_PATH || 'python'
     try {
-      const pyCmd = process.env.PYTHON_PATH || 'python'
       const { stdout } = await execFileAsync(
-        pyCmd,
+        pythonBin,
         [this.scriptPath, '--action', 'analyze_image', '--input', imagePath, '--output_dir', this.outputDir],
-        { timeout: 30000, windowsHide: true }
+        { timeout: 45000, windowsHide: true }
       )
       const res = this.extractJson<ModelImageResult>(stdout)
       if (res.status === 'error') {

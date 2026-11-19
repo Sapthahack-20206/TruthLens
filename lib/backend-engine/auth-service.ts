@@ -242,22 +242,51 @@ class AuthService {
 
   async registerUserAsync(name: string, email: string, password: string): Promise<{ user: SafeUser; token: string }> {
     const cleanEmail = email.trim().toLowerCase()
+    const cleanName = name.trim()
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      throw new Error('Please provide a valid email address.')
+    }
+    if (password.length < 8) {
+      throw new Error('Password must be at least 8 characters long.')
+    }
+
     const existingDbUser = await databaseService.findUserByEmail(cleanEmail)
-    if (existingDbUser) {
+    if (existingDbUser || Array.from(this.users.values()).some((u) => u.email.toLowerCase() === cleanEmail)) {
       throw new Error('An account with this email address already exists. Please sign in instead.')
     }
 
-    const result = this.registerUser(name, email, password)
-    const fullUser = this.users.get(result.user.id)
-    if (fullUser) {
-      const persisted = await databaseService.createUser(fullUser)
-      if (!persisted && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
-        this.users.delete(result.user.id)
-        this.sessions.delete(result.token)
-        throw new Error('Database service unavailable: failed to permanently store user account in production.')
-      }
+    const salt = crypto.randomBytes(16).toString('hex')
+    const passwordHash = this.hashPassword(password, salt)
+    const id = `usr-${crypto.randomBytes(6).toString('hex')}`
+
+    const user: User = {
+      id,
+      name: cleanName,
+      email: cleanEmail,
+      passwordHash,
+      salt,
+      role: 'investigator',
+      createdAt: new Date().toISOString(),
     }
-    return result
+
+    this.users.set(id, user)
+    this.saveUsers()
+
+    const userResult = await databaseService.createUser(user)
+    if (!userResult.success && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
+      this.users.delete(id)
+      const detail = userResult.error
+        ? `Database service unavailable: ${userResult.error}`
+        : 'Database service unavailable: failed to permanently store user account in production.'
+      throw new Error(detail)
+    }
+
+    const token = await this.createSessionAsync(id)
+    return {
+      user: this.toSafeUser(user),
+      token,
+    }
   }
 
   loginUser(email: string, password: string): { user: SafeUser; token: string } {
@@ -330,14 +359,27 @@ class AuthService {
   }
 
   async createSessionAsync(userId: string): Promise<string> {
-    const token = this.createSession(userId)
-    const session = this.sessions.get(token)
-    if (session) {
-      const persisted = await databaseService.createSession(session)
-      if (!persisted && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
-        this.sessions.delete(token)
-        throw new Error('Database service unavailable: failed to permanently store session in production.')
-      }
+    const token = crypto.randomBytes(32).toString('hex')
+    const createdAt = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days
+
+    const session: UserSession = {
+      token,
+      userId,
+      createdAt,
+      expiresAt,
+    }
+
+    this.sessions.set(token, session)
+    this.saveSessions()
+
+    const sessionResult = await databaseService.createSession(session)
+    if (!sessionResult.success && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
+      this.sessions.delete(token)
+      const detail = sessionResult.error
+        ? `Database service unavailable: ${sessionResult.error}`
+        : 'Database service unavailable: failed to permanently store session in production.'
+      throw new Error(detail)
     }
     return token
   }
@@ -384,8 +426,14 @@ class AuthService {
     if (this.sessions.has(token)) {
       this.sessions.delete(token)
       this.saveSessions()
-      databaseService.deleteSession(token).catch(() => {})
     }
+    databaseService.deleteSession(token).catch(() => {})
+  }
+
+  async deleteSessionAsync(token: string): Promise<void> {
+    this.sessions.delete(token)
+    this.saveSessions()
+    await databaseService.deleteSession(token)
   }
 
   getUserById(id: string): SafeUser | null {

@@ -36,7 +36,10 @@ export async function GET(
     if (!unverifiedRecord && !isBaselineSample) {
       unverifiedRecord = (await databaseService.getInvestigation(validId)) || undefined
     }
-    const unverifiedOutput = investigationStore.getRawOutput(validId)
+    let unverifiedOutput = investigationStore.getRawOutput(validId)
+    if (!unverifiedOutput && !isBaselineSample) {
+      unverifiedOutput = (await databaseService.getOutput(validId)) || undefined
+    }
 
     if (!unverifiedRecord && !unverifiedOutput && !isBaselineSample) {
       return NextResponse.json(
@@ -66,8 +69,12 @@ export async function GET(
       }
     }
 
-    const output = isBaselineSample ? unverifiedOutput : (investigationStore.getOutput(validId, effectiveUserId) || unverifiedOutput)
-    const record = isBaselineSample ? unverifiedRecord : (investigationStore.getRecord(validId, effectiveUserId) || unverifiedRecord)
+    const output = isBaselineSample
+      ? unverifiedOutput
+      : ((await investigationStore.getOutputAsync(validId, effectiveUserId)) || (await databaseService.getOutput(validId, effectiveUserId)) || unverifiedOutput)
+    const record = isBaselineSample
+      ? unverifiedRecord
+      : ((await investigationStore.getRecordAsync(validId, effectiveUserId)) || (await databaseService.getInvestigation(validId)) || unverifiedRecord)
 
     const reportData: ForensicReportData = {
       reportId: validId,
@@ -76,13 +83,25 @@ export async function GET(
       date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
       mediaFilename: output?.metadata?.filename ?? record?.filename ?? 'evidence-source.mp4',
       mediaType: output?.metadata?.mimeType ?? record?.mediaType ?? 'Media Evidence',
+      hashSha256: output?.metadata?.hashSha256,
       fileSize: output?.metadata?.fileSize
         ? `${(output.metadata.fileSize / 1024 / 1024).toFixed(2)} MB`
         : record?.fileSize
           ? `${(record.fileSize / 1024 / 1024).toFixed(2)} MB`
           : undefined,
       overallStatus: output?.uncertaintyStatus ?? (record?.requiresReview ? 'Requires Further Review' : 'No Significant Indicators Detected'),
-      confidenceScore: output?.findings?.[0]?.confidence ?? 94,
+      confidenceScore: (() => {
+        const neuralFinding = (output?.findings ?? []).find((f) => f.confidence && !f.isHeuristic)
+        if (neuralFinding && typeof neuralFinding.confidence === 'number') {
+          return neuralFinding.confidence
+        }
+        const ratedFindings = (output?.findings ?? []).filter((f) => typeof f.confidence === 'number' && !isNaN(f.confidence))
+        if (ratedFindings.length > 0) {
+          const sum = ratedFindings.reduce((acc, f) => acc + (f.confidence || 0), 0)
+          return Math.round(sum / ratedFindings.length)
+        }
+        return undefined
+      })(),
       summary: output?.summary ?? record?.assessment ?? 'Examination completed with verified analytical output parameters.',
       videoFindings: (output?.findings ?? [])
         .filter((f) => f.category === 'video')
@@ -106,6 +125,16 @@ export async function GET(
         })),
       transcriptFindings: (output?.findings ?? [])
         .filter((f) => f.category === 'transcript')
+        .map((f) => ({
+          title: f.title,
+          timestamp: f.timestamp,
+          severity: f.severity,
+          confidence: f.confidence,
+          explanation: f.description,
+          humanReview: f.humanReviewRecommendation,
+        })),
+      imageFindings: (output?.findings ?? [])
+        .filter((f) => f.category === 'image')
         .map((f) => ({
           title: f.title,
           timestamp: f.timestamp,

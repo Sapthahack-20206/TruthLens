@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const authContext = authService.getAuthContext(req)
+    const authContext = await authService.getAuthContextAsync(req)
     const { effectiveUserId } = authContext
     const contentType = req.headers.get('content-type') || ''
     let file: File | null = null

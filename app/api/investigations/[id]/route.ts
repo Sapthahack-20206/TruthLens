@@ -24,27 +24,31 @@ export async function GET(
       )
     }
 
-    const authContext = authService.getAuthContext(req)
+    const authContext = await authService.getAuthContextAsync(req)
     const { effectiveUserId } = authContext
 
     const isBaseline = validId === 'inv-baseline-sample' || validId === 'rep-baseline-001'
-    const unverifiedRecord = investigationStore.getRecord(validId)
 
-    if (!unverifiedRecord && !isBaseline) {
-      return NextResponse.json(
-        { detail: `Investigation with ID "${validId}" was not found.` },
-        { status: 404 }
-      )
+    // 1. Asynchronously retrieve record (checks memory cache and queries Supabase PostgreSQL)
+    let record = isBaseline
+      ? await investigationStore.getRecordAsync(validId)
+      : await investigationStore.getRecordAsync(validId, effectiveUserId)
+
+    // 2. If not found under effectiveUserId, check whether it exists globally to accurately return 403 vs 404
+    if (!record && !isBaseline) {
+      const { databaseService } = await import('@/lib/backend-engine/database')
+      const globalRecord = investigationStore.getRawRecord(validId) || (await databaseService.getInvestigation(validId))
+      if (globalRecord) {
+        if (globalRecord.userId && globalRecord.userId !== effectiveUserId) {
+          return NextResponse.json(
+            { detail: 'Forbidden: You do not have permission to access this investigation.' },
+            { status: 403 }
+          )
+        }
+        record = globalRecord
+      }
     }
 
-    if (unverifiedRecord?.userId && !isBaseline && unverifiedRecord.userId !== effectiveUserId) {
-      return NextResponse.json(
-        { detail: 'Forbidden: You do not have permission to access this investigation.' },
-        { status: 403 }
-      )
-    }
-
-    const record = isBaseline ? unverifiedRecord : investigationStore.getRecord(validId, effectiveUserId)
     if (!record) {
       return NextResponse.json(
         { detail: `Investigation with ID "${validId}" was not found.` },

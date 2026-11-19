@@ -5,12 +5,14 @@ export interface ForensicReportData {
   date: string
   mediaFilename: string
   mediaType: string
+  hashSha256?: string
   fileSize?: string
   duration?: string
-  hashSha256?: string
   overallStatus:
     | 'Likely AI-Generated'
     | 'Likely Manipulated'
+    | 'Likely AI-Generated Audio'
+    | 'Likely Manipulated Audio'
     | 'No Significant Indicators Detected'
     | 'Inconclusive'
     | 'Potentially Manipulated'
@@ -106,17 +108,17 @@ export function generateForensicPdfBlob(data: ForensicReportData): Blob {
     statusStroke = '0.2 0.5 0.7'
     statusTextRg = '0.1 0.35 0.55'
   } else if (data.overallStatus === 'Requires Further Review' || data.overallStatus === 'Inconclusive') {
-    statusBg = '0.95 0.95 0.95'
-    statusStroke = '0.5 0.5 0.5'
-    statusTextRg = '0.3 0.3 0.3'
-  } else if (data.overallStatus === 'Likely Manipulated') {
     statusBg = '0.98 0.96 0.92'
     statusStroke = '0.8 0.55 0.15'
     statusTextRg = '0.65 0.4 0.05'
-  } else if (data.overallStatus === 'Likely AI-Generated') {
-    statusBg = '0.98 0.92 0.92'
-    statusStroke = '0.85 0.2 0.2'
-    statusTextRg = '0.75 0.1 0.1'
+  } else if (data.overallStatus === 'Likely AI-Generated' || data.overallStatus === 'Likely AI-Generated Audio') {
+    statusBg = '0.98 0.92 0.94'
+    statusStroke = '0.8 0.15 0.3'
+    statusTextRg = '0.7 0.05 0.2'
+  } else if (data.overallStatus === 'Likely Manipulated Audio' || data.overallStatus === 'Likely Manipulated') {
+    statusBg = '0.98 0.94 0.9'
+    statusStroke = '0.85 0.45 0.1'
+    statusTextRg = '0.75 0.35 0.05'
   }
 
   currentCommands.push(
@@ -124,7 +126,7 @@ export function generateForensicPdfBlob(data: ForensicReportData): Blob {
     `BT /F1 8 Tf ${statusTextRg} rg ${margin + 12} ${currentY - 12} Td (OVERALL FORENSIC VERACITY ASSESSMENT) Tj ET`,
     `BT /F1 14 Tf ${statusTextRg} rg ${margin + 12} ${currentY - 32} Td (${escapePdfText(data.overallStatus.toUpperCase())}) Tj ET`
   )
-  if (data.confidenceScore) {
+  if (data.confidenceScore !== undefined && data.confidenceScore !== null && data.confidenceScore !== '') {
     currentCommands.push(
       `BT /F1 9 Tf 0.3 0.3 0.3 rg 380 ${currentY - 30} Td (Confidence: ${escapePdfText(String(data.confidenceScore))}%) Tj ET`
     )
@@ -140,9 +142,11 @@ export function generateForensicPdfBlob(data: ForensicReportData): Blob {
   currentY -= 48
 
   // Evidence Metadata Box
+  const hasSha = Boolean(data.hashSha256)
+  const metaBoxHeight = hasSha ? 76 : 62
   currentCommands.push(
-    '0.97 0.98 0.99 rg 0.8 0.85 0.9 RG 1 w 50 ' + (currentY - 60) + ' 495 62 re B',
-    'BT /F1 8.5 Tf 0.1 0.4 0.6 rg 60 ' + (currentY - 16) + ' Td (SUBMITTED MEDIA METADATA) Tj ET',
+    `0.97 0.98 0.99 rg 0.8 0.85 0.9 RG 1 w 50 ${currentY - metaBoxHeight} 495 ${metaBoxHeight} re B`,
+    `BT /F1 8.5 Tf 0.1 0.4 0.6 rg 60 ${currentY - 16} Td (SUBMITTED MEDIA METADATA) Tj ET`,
     `BT /F1 8 Tf 0.25 0.25 0.25 rg 60 ${currentY - 32} Td (File Name: ${escapePdfText(data.mediaFilename)}) Tj ET`,
     `BT /F1 8 Tf 0.25 0.25 0.25 rg 60 ${currentY - 48} Td (Media Type: ${escapePdfText(data.mediaType)}) Tj ET`,
     `BT /F1 8 Tf 0.25 0.25 0.25 rg 320 ${currentY - 32} Td (Investigation ID: ${escapePdfText(data.investigationId)}) Tj ET`
@@ -150,7 +154,10 @@ export function generateForensicPdfBlob(data: ForensicReportData): Blob {
   if (data.fileSize) {
     currentCommands.push(`BT /F1 8 Tf 0.25 0.25 0.25 rg 320 ${currentY - 48} Td (Size: ${escapePdfText(data.fileSize)}) Tj ET`)
   }
-  currentY -= 75
+  if (hasSha) {
+    currentCommands.push(`BT /F1 7.5 Tf 0.35 0.35 0.4 rg 60 ${currentY - 64} Td (SHA-256: ${escapePdfText(data.hashSha256!)}) Tj ET`)
+  }
+  currentY -= (metaBoxHeight + 15)
 
   // Analysis Summary
   currentCommands.push(
@@ -216,11 +223,17 @@ export function generateForensicPdfBlob(data: ForensicReportData): Blob {
     currentY -= 10
   }
 
-  printFindingsCategory('Video Analysis', data.videoFindings)
-  printFindingsCategory('Audio Analysis', data.audioFindings)
-  printFindingsCategory('Transcript & Dialogue', data.transcriptFindings)
-  if (data.imageFindings && data.imageFindings.length > 0) {
-    printFindingsCategory('Image Analysis', data.imageFindings)
+  if (data.mediaType === 'image' || (data.imageFindings && data.imageFindings.length > 0 && data.videoFindings.length === 0)) {
+    if (data.imageFindings && data.imageFindings.length > 0) {
+      printFindingsCategory('Image Forensic Analysis', data.imageFindings)
+    }
+  } else {
+    printFindingsCategory('Video Analysis', data.videoFindings)
+    printFindingsCategory('Audio Analysis', data.audioFindings)
+    printFindingsCategory('Transcript & Dialogue', data.transcriptFindings)
+    if (data.imageFindings && data.imageFindings.length > 0) {
+      printFindingsCategory('Image Forensic Analysis', data.imageFindings)
+    }
   }
 
   // --- CROSS-MODAL CORRELATION ---

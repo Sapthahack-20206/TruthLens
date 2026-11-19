@@ -19,7 +19,7 @@ const DANGEROUS_EXTENSIONS = new Set([
 
 export const ALLOWED_EXTENSIONS = new Set([
   '.mp4', '.mov', '.avi', '.webm',
-  '.wav', '.mp3', '.m4a',
+  '.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg',
   '.jpg', '.jpeg', '.png', '.webp',
   '.txt'
 ])
@@ -251,7 +251,53 @@ export function validateFileSignature(
     }
   }
 
-  // --- I. Plain Text / Transcript (.txt) ---
+  // --- I. FLAC Audio (0x66, 0x4C, 0x61, 0x43 - 'fLaC') ---
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x66 &&
+    buffer[1] === 0x4C &&
+    buffer[2] === 0x61 &&
+    buffer[3] === 0x43
+  ) {
+    return {
+      isValid: true,
+      category: 'audio',
+      detectedMime: 'audio/flac',
+      normalizedExt: '.flac',
+    }
+  }
+
+  // --- J. OGG Audio/Container (0x4F, 0x67, 0x67, 0x53 - 'OggS') ---
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x4F &&
+    buffer[1] === 0x67 &&
+    buffer[2] === 0x67 &&
+    buffer[3] === 0x53
+  ) {
+    return {
+      isValid: true,
+      category: 'audio',
+      detectedMime: 'audio/ogg',
+      normalizedExt: '.ogg',
+    }
+  }
+
+  // --- K. AAC Audio (ADTS sync word: 0xFFF) ---
+  if (
+    buffer.length >= 2 &&
+    buffer[0] === 0xFF &&
+    (buffer[1] & 0xF6) === 0xF0
+  ) {
+    return {
+      isValid: true,
+      category: 'audio',
+      detectedMime: 'audio/aac',
+      normalizedExt: '.aac',
+    }
+  }
+
+  // --- L. Plain Text / Transcript (.txt) ---
   if (rawExt === '.txt') {
     let isBinary = false
     const checkLen = Math.min(buffer.length, 1024)

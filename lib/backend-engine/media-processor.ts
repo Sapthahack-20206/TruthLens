@@ -30,6 +30,10 @@ export const ALLOWED_MIME_TYPES = new Set([
   'audio/mp4',
   'audio/x-m4a',
   'audio/aac',
+  'audio/flac',
+  'audio/x-flac',
+  'audio/ogg',
+  'audio/vorbis',
   'image/jpeg',
   'image/png',
   'image/webp',
@@ -145,7 +149,7 @@ export async function validateAndSaveMediaFile(
 
   // 4. Modality-Specific File Size Thresholds
   if (sig.category === 'image' && buffer.length > MAX_IMAGE_SIZE_BYTES) {
-    errors.push(`Image file exceeds maximum permitted image size of 15 MB (${(buffer.length / 1024 / 1024).toFixed(2)} MB).`)
+    errors.push(`Image file exceeds maximum permitted image size of ${Math.round(MAX_IMAGE_SIZE_BYTES / 1024 / 1024)} MB (${(buffer.length / 1024 / 1024).toFixed(2)} MB).`)
     return {
       savedPath: '',
       metadata: {
@@ -160,7 +164,7 @@ export async function validateAndSaveMediaFile(
   }
 
   if (sig.category === 'audio' && buffer.length > MAX_AUDIO_SIZE_BYTES) {
-    errors.push(`Audio file exceeds maximum permitted audio size of 30 MB (${(buffer.length / 1024 / 1024).toFixed(2)} MB).`)
+    errors.push(`Audio file exceeds maximum permitted audio size of ${Math.round(MAX_AUDIO_SIZE_BYTES / 1024 / 1024)} MB (${(buffer.length / 1024 / 1024).toFixed(2)} MB).`)
     return {
       savedPath: '',
       metadata: {
@@ -194,6 +198,17 @@ export async function validateAndSaveMediaFile(
   }
 
   extractContainerMetadata(buffer, sig.normalizedExt, metadata)
+
+  if (sig.category === 'audio') {
+    const probe = await probeAudioStreamFfmpeg(targetPath)
+    if (!probe.error) {
+      if (probe.duration) metadata.duration = probe.duration
+      if (probe.sampleRate) metadata.sampleRate = probe.sampleRate
+      if (probe.channels) metadata.channels = probe.channels
+      if (probe.codec) metadata.codec = probe.codec
+      if (probe.bitrateKbps) metadata.bitrate = probe.bitrateKbps * 1000
+    }
+  }
 
   return {
     savedPath: targetPath,
@@ -377,6 +392,113 @@ function parseFfmpegStderr(stderr: string): {
   const hasAudio = /Stream.*Audio:/.test(stderr)
 
   return { duration, resolution, fps, codec, hasAudio }
+}
+
+export async function probeAudioStreamFfmpeg(audioPath: string): Promise<{
+  duration?: number
+  sampleRate?: number
+  channels?: number
+  codec?: string
+  bitrateKbps?: number
+  error?: string
+}> {
+  const binary = getFfmpegPath()
+  try {
+    const { stderr } = await execAsync(`"${binary}" -i "${audioPath}"`)
+    return parseFfmpegAudioStderr(stderr)
+  } catch (err: unknown) {
+    const errorObj = err as { stderr?: string; message?: string }
+    if (errorObj?.stderr) {
+      return parseFfmpegAudioStderr(errorObj.stderr)
+    }
+    return { error: errorObj?.message || 'Failed to probe audio stream metadata.' }
+  }
+}
+
+function parseFfmpegAudioStderr(stderr: string): {
+  duration?: number
+  sampleRate?: number
+  channels?: number
+  codec?: string
+  bitrateKbps?: number
+  error?: string
+} {
+  if (stderr.includes('Invalid data found')) {
+    return { error: 'Corrupted audio file or unsupported audio header.' }
+  }
+
+  let duration: number | undefined
+  const durMatch = stderr.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}\.\d+)/)
+  if (durMatch) {
+    const hours = parseInt(durMatch[1], 10)
+    const mins = parseInt(durMatch[2], 10)
+    const secs = parseFloat(durMatch[3])
+    duration = hours * 3600 + mins * 60 + secs
+  }
+
+  let sampleRate: number | undefined
+  let channels = 1
+  let codec: string | undefined
+  let bitrateKbps: number | undefined
+
+  const audioStreamMatch = stderr.match(/Stream.*Audio:\s*([a-zA-Z0-9_-]+)[^,]*, (\d+) Hz,\s*([^,]+)/)
+  if (audioStreamMatch) {
+    codec = audioStreamMatch[1]
+    sampleRate = parseInt(audioStreamMatch[2], 10)
+    const channelDesc = audioStreamMatch[3].toLowerCase()
+    if (channelDesc.includes('stereo')) channels = 2
+    else if (channelDesc.includes('mono')) channels = 1
+    else if (channelDesc.includes('5.1')) channels = 6
+    else if (channelDesc.includes('7.1')) channels = 8
+  }
+
+  const brMatch = stderr.match(/bitrate:\s*(\d+)\s*kb\/s/)
+  if (brMatch) {
+    bitrateKbps = parseInt(brMatch[1], 10)
+  }
+
+  return { duration, sampleRate, channels, codec, bitrateKbps }
+}
+
+export async function transcodeToPcmWav(
+  inputAudioPath: string,
+  outputWavPath: string,
+  targetSampleRate = 16000
+): Promise<{ success: boolean; outputPath?: string; error?: string }> {
+  const binary = getFfmpegPath()
+  const resolvedInput = path.resolve(inputAudioPath)
+  const resolvedOutput = path.resolve(outputWavPath)
+
+  if (!resolvedInput.startsWith(TEMP_BASE_DIR) || !resolvedOutput.startsWith(TEMP_BASE_DIR)) {
+    return { success: false, error: 'Security boundary violated: Audio path outside forensic sandbox.' }
+  }
+
+  const isAvailable = await checkFfmpegAvailable()
+  if (!isAvailable) {
+    return { success: false, error: 'FFmpeg is not available to transcode audio.' }
+  }
+
+  try {
+    // Normalization + resample to 16kHz mono 16-bit PCM WAV
+    const cmd = `"${binary}" -i "${resolvedInput}" -af "loudnorm=I=-16:LRA=11:TP=-1.5" -acodec pcm_s16le -ar ${targetSampleRate} -ac 1 "${resolvedOutput}" -y`
+    try {
+      await execAsync(cmd)
+    } catch {
+      // Fallback without loudnorm for ultra-short audio segments (< 3 sec)
+      const simpleCmd = `"${binary}" -i "${resolvedInput}" -acodec pcm_s16le -ar ${targetSampleRate} -ac 1 "${resolvedOutput}" -y`
+      await execAsync(simpleCmd)
+    }
+
+    if (fs.existsSync(resolvedOutput) && fs.statSync(resolvedOutput).size > 44) {
+      return { success: true, outputPath: resolvedOutput }
+    }
+    return { success: false, error: 'Transcoded PCM WAV file was empty or missing.' }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'FFmpeg audio normalization/transcoding failed.',
+    }
+  }
 }
 
 export async function extractVideoFrames(

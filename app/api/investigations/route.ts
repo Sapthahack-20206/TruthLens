@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const authContext = authService.getAuthContext(req)
+    const authContext = await authService.getAuthContextAsync(req)
     const { effectiveUserId } = authContext
     const { searchParams } = new URL(req.url)
 
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const authContext = authService.getAuthContext(req)
+    const authContext = await authService.getAuthContextAsync(req)
     const { effectiveUserId } = authContext
 
     const contentType = req.headers.get('content-type') || ''

@@ -181,8 +181,8 @@ export default function MultimodalCorrelationPanel({
         <div className="combined-correlations-section">
           {combinedFindings.length > 0 ? (
             <div className="combined-cards-grid">
-              {combinedFindings.map((cf) => (
-                <div key={cf.id} className={`combined-finding-card severity-${cf.severity}`}>
+              {combinedFindings.map((cf, cIdx) => (
+                <div key={`${cf.id}-${cIdx}`} className={`combined-finding-card severity-${cf.severity}`}>
                   <div className="cf-card-header">
                     <div className="cf-badges-row">
                       <span className={`severity-tag ${cf.severity}`}>{cf.severity.toUpperCase()}</span>
@@ -259,7 +259,7 @@ export default function MultimodalCorrelationPanel({
                 const isSelected = selectedTimelineEvent?.id === ev.id
                 return (
                   <div
-                    key={ev.id}
+                    key={`${ev.id}-${index}`}
                     className={`timeline-entry-row ${ev.isCombined ? 'is-combined' : ''} ${isSelected ? 'is-selected' : ''}`}
                     onClick={() => {
                       setSelectedTimelineEvent(ev)
@@ -359,8 +359,8 @@ export default function MultimodalCorrelationPanel({
 
           <div className="separate-findings-list">
             {separateFindings[selectedSeparateModality].length > 0 ? (
-              separateFindings[selectedSeparateModality].map((f) => (
-                <div key={f.id} className="separate-finding-item">
+              separateFindings[selectedSeparateModality].map((f, fIdx) => (
+                <div key={`${f.id}-${fIdx}`} className="separate-finding-item">
                   <div className="item-top">
                     <strong className="item-title">{f.title}</strong>
                     <div className="item-meta">

@@ -97,7 +97,13 @@ function runPythonForensicAnalyzer(
     pyProcess.on('close', (code) => {
       if (code === 0 && stdout.trim()) {
         try {
-          const parsed = JSON.parse(stdout) as PythonForensicOutput
+          const firstBrace = stdout.indexOf('{')
+          const lastBrace = stdout.lastIndexOf('}')
+          if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+            throw new Error('No valid JSON object boundaries found in forensic output')
+          }
+          const cleanJson = stdout.slice(firstBrace, lastBrace + 1)
+          const parsed = JSON.parse(cleanJson) as PythonForensicOutput
           resolve(parsed)
         } catch (parseErr) {
           console.error('[VideoForensics] Failed to parse JSON stdout:', parseErr)

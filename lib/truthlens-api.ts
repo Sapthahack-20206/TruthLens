@@ -86,6 +86,8 @@ export type ForensicResponse = {
   uncertaintyStatus?:
     | 'Likely AI-Generated'
     | 'Likely Manipulated'
+    | 'Likely AI-Generated Audio'
+    | 'Likely Manipulated Audio'
     | 'No Significant Indicators Detected'
     | 'Inconclusive'
     | 'Potentially Manipulated'
@@ -123,6 +125,36 @@ export type ForensicResponse = {
     facesDetectedCount: number
     averageInterframeDiff: number
     compressionVariance: number
+  }
+  audioTimeline?: Array<{
+    startTime: string
+    endTime: string
+    startSec: number
+    endSec: number
+    isSuspicious: boolean
+    syntheticProbability: number
+    snrDb: number
+    spectralFlux: number
+    spectralFlatness: number
+    jitterPercent?: number
+    shimmerPercent?: number
+    voiceActive: boolean
+    label: string
+  }>
+  audioMetrics?: {
+    durationSec: number
+    sampleRate: number
+    channels: number
+    overallSyntheticProbability: number
+    overallAuthenticProbability: number
+    voiceActivityRatio: number
+    snrDb: number
+    highFreqCutoffHz?: number
+    meanSpectralFlux: number
+    meanSpectralFlatness: number
+    phaseInconsistencyScore: number
+    suspiciousSegmentCount: number
+    modelName: string
   }
 }
 
