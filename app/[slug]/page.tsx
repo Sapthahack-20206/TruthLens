@@ -7,6 +7,10 @@ const policyRoutes = ['privacy', 'terms'] as const
 type AuthRoute = (typeof authRoutes)[number]
 type PolicyRoute = (typeof policyRoutes)[number]
 
+export function generateStaticParams() {
+  return [...authRoutes, ...policyRoutes].map((slug) => ({ slug }))
+}
+
 export default async function AuthRoutePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
   if (authRoutes.includes(slug as AuthRoute)) return <AuthScreen mode={slug as AuthRoute} />
