@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  truthlens-ai-engine:
+    build:
+      context: ..
+      dockerfile: ai-service/Dockerfile
+    container_name: truthlens-ai-inference
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - AI_SERVICE_API_KEY=truthlens-ai-secret-key-prod
+      - MAX_IMAGE_SIZE_BYTES=26214400 # 25MB
+      - MAX_VIDEO_SIZE_BYTES=104857600 # 100MB
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M
+        reservations:
+          cpus: '1.0'
+          memory: 1024M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

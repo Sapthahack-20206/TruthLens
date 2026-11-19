@@ -1,5 +1,6 @@
 import path from 'node:path'
 import fs from 'node:fs'
+import fsp from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { logger } from './logger'
@@ -81,6 +82,8 @@ export interface ModelAudioResult {
 export class ModelService {
   private scriptPath: string
   private outputDir: string
+  private aiServiceUrl: string
+  private aiServiceApiKey: string
   private cachedAvailability: {
     data: { available: boolean; vitModel: boolean; yunetModel: boolean; errors: string[] }
     timestamp: number
@@ -89,6 +92,9 @@ export class ModelService {
   constructor() {
     this.scriptPath = path.join(process.cwd(), 'lib', 'backend-engine', 'python-engine', 'deepfake_detector.py')
     this.outputDir = ARTIFACTS_TEMP_DIR
+    this.aiServiceUrl = (process.env.AI_SERVICE_URL || process.env.PYTHON_INFERENCE_URL || '').replace(/\/$/, '')
+    this.aiServiceApiKey = process.env.AI_SERVICE_API_KEY || ''
+
     try {
       if (!fs.existsSync(this.outputDir)) {
         fs.mkdirSync(this.outputDir, { recursive: true })
@@ -96,6 +102,21 @@ export class ModelService {
     } catch {
       // Non-fatal if temp directory creation delayed
     }
+
+    if (this.aiServiceUrl) {
+      logger.info(`ModelService initialized with remote AI inference URL: ${this.aiServiceUrl}`)
+    } else {
+      logger.info('ModelService initialized using local Python deepfake engine')
+    }
+  }
+
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {}
+    if (this.aiServiceApiKey) {
+      headers['X-API-Key'] = this.aiServiceApiKey
+      headers['Authorization'] = `Bearer ${this.aiServiceApiKey}`
+    }
+    return headers
   }
 
   private extractJson<T>(raw: string): T {
@@ -110,7 +131,7 @@ export class ModelService {
 
   /**
    * Check if the neural models and Python dependencies are ready and operational.
-   * Caches response for 60 seconds to eliminate redundant process spawns.
+   * Caches response for 60 seconds to eliminate redundant process spawns or network calls.
    */
   async checkModelAvailability(): Promise<{
     available: boolean
@@ -123,6 +144,30 @@ export class ModelService {
       return this.cachedAvailability.data
     }
 
+    // 1. Try remote AI microservice if configured
+    if (this.aiServiceUrl) {
+      try {
+        const response = await fetch(`${this.aiServiceUrl}/api/v1/models/availability`, {
+          headers: this.getAuthHeaders(),
+          signal: AbortSignal.timeout(5000),
+        })
+        if (response.ok) {
+          const data = await response.json()
+          const result = {
+            available: Boolean(data.available),
+            vitModel: Boolean(data.vitModel),
+            yunetModel: Boolean(data.yunetModel),
+            errors: Array.isArray(data.errors) ? data.errors : [],
+          }
+          this.cachedAvailability = { data: result, timestamp: now }
+          return result
+        }
+      } catch (remoteErr) {
+        logger.warn(`Remote AI availability check failed at ${this.aiServiceUrl}, checking local fallback`, remoteErr)
+      }
+    }
+
+    // 2. Local Python CLI fallback
     try {
       const { stdout } = await execFileAsync('python', [this.scriptPath, '--action', 'ping'], {
         timeout: 10000,
@@ -146,8 +191,35 @@ export class ModelService {
 
   /**
    * Perform neural deepfake detection and face region localization on an image.
+   * Supports both remote AI microservice and local engine execution.
    */
   async analyzeImage(imagePath: string): Promise<ModelImageResult | null> {
+    // 1. Remote AI Microservice
+    if (this.aiServiceUrl) {
+      try {
+        const buffer = await fsp.readFile(imagePath)
+        const filename = path.basename(imagePath)
+        const formData = new FormData()
+        formData.append('file', new Blob([buffer]), filename)
+
+        const response = await fetch(`${this.aiServiceUrl}/api/v1/analyze/image`, {
+          method: 'POST',
+          headers: this.getAuthHeaders(),
+          body: formData,
+          signal: AbortSignal.timeout(30000),
+        })
+
+        if (response.ok) {
+          const res = (await response.json()) as ModelImageResult
+          if (res.status !== 'error') return res
+        }
+        logger.warn(`Remote AI image analysis responded with error status, attempting local fallback`)
+      } catch (remoteErr) {
+        logger.warn(`Failed remote AI image inference at ${this.aiServiceUrl}, falling back to local Python`, remoteErr)
+      }
+    }
+
+    // 2. Local Python Execution Fallback
     try {
       const { stdout } = await execFileAsync(
         'python',
@@ -168,8 +240,40 @@ export class ModelService {
 
   /**
    * Perform temporal frame-by-frame neural deepfake detection on video.
+   * Supports both remote AI microservice and local engine execution.
    */
   async analyzeVideo(videoPath: string, sampleFps = 1.0, maxFrames = 45): Promise<ModelVideoResult | null> {
+    // 1. Remote AI Microservice
+    if (this.aiServiceUrl) {
+      try {
+        const buffer = await fsp.readFile(videoPath)
+        const filename = path.basename(videoPath)
+        const formData = new FormData()
+        formData.append('file', new Blob([buffer]), filename)
+
+        const query = new URLSearchParams({
+          sample_fps: String(sampleFps),
+          max_frames: String(maxFrames),
+        })
+
+        const response = await fetch(`${this.aiServiceUrl}/api/v1/analyze/video?${query.toString()}`, {
+          method: 'POST',
+          headers: this.getAuthHeaders(),
+          body: formData,
+          signal: AbortSignal.timeout(60000),
+        })
+
+        if (response.ok) {
+          const res = (await response.json()) as ModelVideoResult
+          if (res.status !== 'error') return res
+        }
+        logger.warn(`Remote AI video analysis responded with error status, attempting local fallback`)
+      } catch (remoteErr) {
+        logger.warn(`Failed remote AI video inference at ${this.aiServiceUrl}, falling back to local Python`, remoteErr)
+      }
+    }
+
+    // 2. Local Python Execution Fallback
     try {
       const { stdout } = await execFileAsync(
         'python',
@@ -202,8 +306,35 @@ export class ModelService {
 
   /**
    * Perform acoustic spectral analysis and STFT spectrogram rendering on audio.
+   * Supports both remote AI microservice and local engine execution.
    */
   async analyzeAudio(audioPath: string): Promise<ModelAudioResult | null> {
+    // 1. Remote AI Microservice
+    if (this.aiServiceUrl) {
+      try {
+        const buffer = await fsp.readFile(audioPath)
+        const filename = path.basename(audioPath)
+        const formData = new FormData()
+        formData.append('file', new Blob([buffer]), filename)
+
+        const response = await fetch(`${this.aiServiceUrl}/api/v1/analyze/audio`, {
+          method: 'POST',
+          headers: this.getAuthHeaders(),
+          body: formData,
+          signal: AbortSignal.timeout(20000),
+        })
+
+        if (response.ok) {
+          const res = (await response.json()) as ModelAudioResult
+          if (res.status !== 'error') return res
+        }
+        logger.warn(`Remote AI audio analysis responded with error status, attempting local fallback`)
+      } catch (remoteErr) {
+        logger.warn(`Failed remote AI audio inference at ${this.aiServiceUrl}, falling back to local Python`, remoteErr)
+      }
+    }
+
+    // 2. Local Python Execution Fallback
     try {
       const { stdout } = await execFileAsync(
         'python',

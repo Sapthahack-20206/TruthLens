@@ -36,3 +36,9 @@ AGENTS.md
 /public/forensic-output/
 /data/
 
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+
