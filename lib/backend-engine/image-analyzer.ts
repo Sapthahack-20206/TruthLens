@@ -1,12 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { exec } from 'node:child_process'
+import { exec, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { DetectionIndicator, MediaMetadata, SuspiciousRegion } from './types'
 import { modelService } from './model-service'
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 export interface ImageAnalysisResult {
   indicators: DetectionIndicator[]
@@ -78,12 +79,12 @@ export async function analyzeImageEvidence(
       }
       const elaOutputPath = path.join(publicOutputDir, elaFilename)
 
-      const pythonScript = `
-import sys
+      const pythonScript = `import sys
+import os
 from PIL import Image, ImageChops, ImageEnhance
 
-src = r"${imagePath.replace(/\\/g, '\\\\')}"
-dst = r"${elaOutputPath.replace(/\\/g, '\\\\')}"
+src = sys.argv[1]
+dst = sys.argv[2]
 
 try:
     im = Image.open(src).convert('RGB')
@@ -102,14 +103,13 @@ try:
     diff = ImageEnhance.Brightness(diff).enhance(scale)
     
     diff.save(dst, 'JPEG', quality=95)
-    import os
     if os.path.exists(temp_resave):
         os.remove(temp_resave)
     print("SUCCESS")
 except Exception as e:
     print("ERROR:", str(e))
 `
-      const { stdout } = await execAsync(`python -c "${pythonScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`)
+      const { stdout } = await execFileAsync('python', ['-c', pythonScript, imagePath, elaOutputPath])
       if (stdout.includes('SUCCESS') && fs.existsSync(elaOutputPath)) {
         visualizations.push({
           label: 'Error Level Analysis (ELA) Compression Map',

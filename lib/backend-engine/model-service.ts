@@ -80,6 +80,10 @@ export interface ModelAudioResult {
 export class ModelService {
   private scriptPath: string
   private outputDir: string
+  private cachedAvailability: {
+    data: { available: boolean; vitModel: boolean; yunetModel: boolean; errors: string[] }
+    timestamp: number
+  } | null = null
 
   constructor() {
     this.scriptPath = path.join(process.cwd(), 'lib', 'backend-engine', 'python-engine', 'deepfake_detector.py')
@@ -101,6 +105,7 @@ export class ModelService {
 
   /**
    * Check if the neural models and Python dependencies are ready and operational.
+   * Caches response for 60 seconds to eliminate redundant process spawns.
    */
   async checkModelAvailability(): Promise<{
     available: boolean
@@ -108,20 +113,29 @@ export class ModelService {
     yunetModel: boolean
     errors: string[]
   }> {
+    const now = Date.now()
+    if (this.cachedAvailability && now - this.cachedAvailability.timestamp < 60000) {
+      return this.cachedAvailability.data
+    }
+
     try {
       const { stdout } = await execFileAsync('python', [this.scriptPath, '--action', 'ping'], {
         timeout: 10000,
         windowsHide: true,
       })
-      return this.extractJson(stdout)
+      const result = this.extractJson<{ available: boolean; vitModel: boolean; yunetModel: boolean; errors: string[] }>(stdout)
+      this.cachedAvailability = { data: result, timestamp: now }
+      return result
     } catch (err) {
       logger.warn('Deepfake model availability check failed', err)
-      return {
+      const errorResult = {
         available: false,
         vitModel: false,
         yunetModel: false,
         errors: [err instanceof Error ? err.message : String(err)],
       }
+      this.cachedAvailability = { data: errorResult, timestamp: now }
+      return errorResult
     }
   }
 
