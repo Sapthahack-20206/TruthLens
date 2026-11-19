@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useMemo } from 'react'
 import {
   AudioLines,
   Check,
@@ -23,19 +23,20 @@ import {
   RefreshCw,
   RotateCcw,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   Volume2,
   VolumeX,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
+import ForensicMediaPlayer from '@/components/forensic-media-player'
 import {
   calculateFileSha256,
   formatBytes,
   getEvidenceCategory,
   getFileExtension,
   readTextFile,
-  type EvidenceCategory,
 } from '@/lib/evidence-utils'
 
 export function useMediaPreviewUrl(file?: File) {
@@ -75,6 +76,7 @@ export default function MediaPreview({
   onSyncContext,
 }: MediaPreviewProps) {
   const [internalIndex, setInternalIndex] = useState(0)
+  const [showAdvancedForensicPlayer, setShowAdvancedForensicPlayer] = useState(false)
   const activeIndex = controlledIndex !== undefined ? controlledIndex : internalIndex
   const safeIndex = Math.min(Math.max(0, activeIndex), Math.max(0, files.length - 1))
   const currentFile = files[safeIndex]
@@ -114,6 +116,25 @@ export default function MediaPreview({
   const ext = currentFile ? getFileExtension(currentFile.name).toUpperCase() : ''
 
   if (!currentFile || files.length === 0) return null
+
+  // If user explicitly launched advanced forensic media player for video/audio
+  if ((category === 'video' || category === 'audio') && showAdvancedForensicPlayer) {
+    return (
+      <div className="advanced-player-wrapper">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <button
+            type="button"
+            className="staged-subtle-btn"
+            onClick={() => setShowAdvancedForensicPlayer(false)}
+          >
+            ← Return to Evidence Preview
+          </button>
+          <span style={{ fontSize: '11px', color: '#666' }}>Interactive Forensic Player Active</span>
+        </div>
+        <ForensicMediaPlayer file={currentFile} />
+      </div>
+    )
+  }
 
   return (
     <section className="evidence-preview-card" aria-label="Evidence preview workspace">
@@ -172,6 +193,18 @@ export default function MediaPreview({
 
         {/* Evidence Actions Toolbar */}
         <div className="evidence-header-actions">
+          {(category === 'video' || category === 'audio') && (
+            <button
+              type="button"
+              className="evidence-action-btn"
+              onClick={() => setShowAdvancedForensicPlayer(true)}
+              title="Launch full forensic audio/video player with live transcript"
+            >
+              <Sparkles className="action-icon text-orange-600" />
+              <span>Forensic Player</span>
+            </button>
+          )}
+
           {onReplaceFile && (
             <button
               type="button"
