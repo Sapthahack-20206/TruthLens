@@ -36,12 +36,13 @@ export interface RateLimitResult {
   remaining: number
   limit: number
   retryAfterSeconds: number
+  isDistributed?: boolean
 }
 
 /**
  * Distributed rate limiter with Upstash Redis REST support and in-memory sliding window fallback.
  */
-class RateLimiter {
+export class RateLimiter {
   private inMemoryStore: Map<string, ClientRecord> = new Map()
   private lastCleanup = Date.now()
   private upstashUrl = process.env.UPSTASH_REDIS_REST_URL || ''
@@ -51,9 +52,10 @@ class RateLimiter {
     return Boolean(this.upstashUrl && this.upstashToken && this.upstashUrl.startsWith('http'))
   }
 
-  /**
-   * Retrieves client IP address from headers safely.
-   */
+  public isDistributed(): boolean {
+    return this.hasDistributedStore
+  }
+
   public getClientIp(req: NextRequest): string {
     const forwarded = req.headers.get('x-forwarded-for')
     if (forwarded) {
@@ -138,6 +140,7 @@ class RateLimiter {
         remaining: 0,
         limit: config.maxRequests,
         retryAfterSeconds,
+        isDistributed: true,
       }
     }
 
@@ -146,6 +149,7 @@ class RateLimiter {
       remaining,
       limit: config.maxRequests,
       retryAfterSeconds: 0,
+      isDistributed: true,
     }
   }
 
@@ -174,6 +178,7 @@ class RateLimiter {
         remaining: 0,
         limit: config.maxRequests,
         retryAfterSeconds,
+        isDistributed: false,
       }
     }
 
@@ -185,6 +190,7 @@ class RateLimiter {
       remaining: config.maxRequests - validTimestamps.length,
       limit: config.maxRequests,
       retryAfterSeconds: 0,
+      isDistributed: false,
     }
   }
 
@@ -205,6 +211,8 @@ class RateLimiter {
     }
   }
 }
+
+export const DistributedRateLimiter = RateLimiter
 
 // Global Singleton Rate Limiter
 const globalRateLimiterKey = Symbol.for('truthlens.rateLimiter')
@@ -241,6 +249,7 @@ export async function enforceRateLimit(
           'Retry-After': String(result.retryAfterSeconds),
           'X-RateLimit-Limit': String(result.limit),
           'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Distributed': String(result.isDistributed ?? false),
         },
       }
     )
@@ -248,3 +257,5 @@ export async function enforceRateLimit(
 
   return null
 }
+
+export const enforceRateLimitAsync = enforceRateLimit

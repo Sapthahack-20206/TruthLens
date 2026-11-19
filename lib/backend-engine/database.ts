@@ -58,6 +58,26 @@ export class DatabaseService {
     return this.client
   }
 
+  isReady(): boolean {
+    return this.isConfigured && this.client !== null
+  }
+
+  async ping(): Promise<{ connected: boolean; latencyMs?: number; error?: string }> {
+    if (!this.client) {
+      return { connected: false, error: 'Database client not configured' }
+    }
+    const start = Date.now()
+    try {
+      const { error } = await this.client.from('users').select('id').limit(1)
+      if (error) {
+        return { connected: false, error: error.message }
+      }
+      return { connected: true, latencyMs: Date.now() - start }
+    } catch (err) {
+      return { connected: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   // ============================================================================
   // USER OPERATIONS
   // ============================================================================

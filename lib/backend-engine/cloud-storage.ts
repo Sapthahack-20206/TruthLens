@@ -131,6 +131,15 @@ export class CloudStorageService {
     }
   }
 
+  getStatus(): { configured: boolean; bucket: string; provider: string } {
+    const supabase = databaseService.getSupabase()
+    return {
+      configured: Boolean(supabase),
+      bucket: this.bucketName,
+      provider: supabase ? 'supabase_storage' : 'local_tmp',
+    }
+  }
+
   /**
    * Uploads an artifact (image, spectrogram, PDF, report) to cloud object storage (Supabase Storage)
    * or safely buffers it to the local /tmp artifacts directory.
