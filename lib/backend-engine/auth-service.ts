@@ -250,7 +250,12 @@ class AuthService {
     const result = this.registerUser(name, email, password)
     const fullUser = this.users.get(result.user.id)
     if (fullUser) {
-      await databaseService.createUser(fullUser)
+      const persisted = await databaseService.createUser(fullUser)
+      if (!persisted && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
+        this.users.delete(result.user.id)
+        this.sessions.delete(result.token)
+        throw new Error('Database service unavailable: failed to permanently store user account in production.')
+      }
     }
     return result
   }
@@ -328,7 +333,11 @@ class AuthService {
     const token = this.createSession(userId)
     const session = this.sessions.get(token)
     if (session) {
-      await databaseService.createSession(session)
+      const persisted = await databaseService.createSession(session)
+      if (!persisted && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
+        this.sessions.delete(token)
+        throw new Error('Database service unavailable: failed to permanently store session in production.')
+      }
     }
     return token
   }

@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS report_metadata (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 6. Analysis Outputs Table (Complete Forensic Telemetry Payload)
+CREATE TABLE IF NOT EXISTS analysis_outputs (
+    id VARCHAR(64) PRIMARY KEY,
+    investigation_id VARCHAR(64) NOT NULL,
+    report_id VARCHAR(64),
+    user_id VARCHAR(128) NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Performance & Query B-Tree Indexes
 CREATE INDEX IF NOT EXISTS idx_investigations_user_created ON investigations(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_investigations_report_id ON investigations(report_id);
@@ -76,6 +86,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON report_metadata(user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_investigation ON report_metadata(investigation_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_outputs_user ON analysis_outputs(user_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_outputs_inv ON analysis_outputs(investigation_id);
 
 -- Optional Row-Level Security (RLS) Enablement for Supabase PostgreSQL
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -83,6 +95,7 @@ ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE investigations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analysis_findings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE report_metadata ENABLE ROW LEVEL SECURITY;
+ALTER TABLE analysis_outputs ENABLE ROW LEVEL SECURITY;
 
 -- Service Role Policies (Allows server-side backend engine full access)
 DO $$
@@ -101,5 +114,8 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'service_role_all_reports') THEN
         CREATE POLICY service_role_all_reports ON report_metadata FOR ALL USING (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'service_role_all_outputs') THEN
+        CREATE POLICY service_role_all_outputs ON analysis_outputs FOR ALL USING (true);
     END IF;
 END $$;

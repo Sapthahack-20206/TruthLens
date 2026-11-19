@@ -183,7 +183,11 @@ class InvestigationStore {
 
   async saveRecordAsync(record: InvestigationRecord): Promise<void> {
     this.saveRecord(record)
-    await databaseService.saveInvestigation(record)
+    const persisted = await databaseService.saveInvestigation(record)
+    if (!persisted && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
+      logger.error(`Failed to persist investigation ${record.id} to Supabase in production environment.`)
+      throw new Error(`Database persistence failure: unable to permanently store investigation ${record.id} in Supabase PostgreSQL.`)
+    }
   }
 
   getRawRecord(id: string): InvestigationRecord | undefined {
@@ -308,7 +312,11 @@ class InvestigationStore {
 
   async saveOutputAsync(output: ForensicAnalysisOutput, userId?: string): Promise<void> {
     this.saveOutput(output, userId)
-    await databaseService.saveOutput(output, userId)
+    const persisted = await databaseService.saveOutput(output, userId)
+    if (!persisted && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true') {
+      logger.error(`Failed to persist output ${output.id} to Supabase in production environment.`)
+      throw new Error(`Database persistence failure: unable to permanently store analysis output ${output.id} in Supabase PostgreSQL.`)
+    }
   }
 
   getOutput(id: string, userId?: string): ForensicAnalysisOutput | undefined {

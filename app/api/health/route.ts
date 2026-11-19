@@ -40,14 +40,35 @@ export async function GET() {
   // Storage status
   const storageStatus = cloudStorage.getStatus()
 
+  // Production Readiness Assessment
+  const isProd = process.env.NODE_ENV === 'production'
+  const allowLocalDb = process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK === 'true'
+  const allowLocalStorage = process.env.ALLOW_LOCAL_STORAGE_FALLBACK === 'true'
+  const allowLocalRateLimit = process.env.ALLOW_LOCAL_RATELIMIT_FALLBACK === 'true'
+  const allowLocalAi = process.env.ALLOW_LOCAL_AI_FALLBACK === 'true'
+
+  const dbHealthy = databaseService.isReady() || (!isProd || allowLocalDb)
+  const storageHealthy = storageStatus.configured || (!isProd || allowLocalStorage)
+  const rateLimitHealthy = rateLimiter.isDistributed() || (!isProd || allowLocalRateLimit)
+  const aiHealthy = aiStatus.available
+
+  const allHealthy = dbHealthy && storageHealthy && rateLimitHealthy && aiHealthy
+
   return NextResponse.json(
     {
-      status: 'healthy',
+      status: allHealthy ? 'healthy' : 'degraded',
       service: 'TruthLens Forensic Platform',
       version: '1.0.0',
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.floor(uptime),
       environment: process.env.NODE_ENV || 'production',
+      readiness: {
+        allComponentsReady: allHealthy,
+        databaseMandatory: isProd && !allowLocalDb,
+        storageMandatory: isProd && !allowLocalStorage,
+        rateLimiterMandatory: isProd && !allowLocalRateLimit,
+        aiServiceMandatory: isProd && !allowLocalAi,
+      },
       system: {
         platform: os.platform(),
         arch: os.arch(),

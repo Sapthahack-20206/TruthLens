@@ -233,6 +233,20 @@ export async function enforceRateLimit(
   type: RateLimitType = 'analyze',
   customKey?: string
 ): Promise<NextResponse | null> {
+  const isProduction = process.env.NODE_ENV === 'production'
+  const allowLocalRateLimitFallback = process.env.ALLOW_LOCAL_RATELIMIT_FALLBACK === 'true'
+
+  if (isProduction && !rateLimiter.isDistributed() && !allowLocalRateLimitFallback) {
+    logger.error('CRITICAL: Upstash Redis distributed rate limiting is mandatory in production but is not configured.')
+    return NextResponse.json(
+      {
+        error: 'Service Misconfiguration',
+        detail: 'Distributed rate limiting is required in production. Please configure UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN or set ALLOW_LOCAL_RATELIMIT_FALLBACK=true.',
+      },
+      { status: 503 }
+    )
+  }
+
   const ip = rateLimiter.getClientIp(req)
   const key = customKey ? `${ip}:${customKey}` : ip
   const result = await rateLimiter.checkLimitAsync(key, type)

@@ -196,6 +196,11 @@ export class CloudStorageService {
     }
 
     // 2. Local /tmp fallback
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_STORAGE_FALLBACK !== 'true') {
+      logger.error(`CRITICAL: Supabase Storage upload failed or not configured in production for ${safeName}. Refusing silent local /tmp persistence.`)
+      throw new Error(`Production cloud storage mandatory: unable to persist artifact ${safeName} to Supabase bucket '${this.bucketName}'.`)
+    }
+
     ensureArtifactsDir()
     const localFilePath = path.join(ARTIFACTS_TEMP_DIR, safeName)
     await fsp.writeFile(localFilePath, buffer)
@@ -390,6 +395,11 @@ export class CloudStorageService {
     }
 
     // Direct Signed Local Provider (HMAC-tokenized)
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_STORAGE_FALLBACK !== 'true') {
+      logger.error('CRITICAL: Supabase Storage presigned upload URL generation failed or is not configured in production.')
+      throw new Error(`Cloud storage mandatory: Unable to generate secure upload credentials for Supabase bucket '${this.bucketName}'.`)
+    }
+
     const tokenPayload = `${storageKey}:${expiresAt}:${fileSize}`
     const hmac = crypto.createHmac('sha256', this.signingSecret).update(tokenPayload).digest('hex')
     const uploadUrl = `/api/upload/direct?key=${encodeURIComponent(storageKey)}&exp=${encodeURIComponent(expiresAt)}&sig=${hmac}`

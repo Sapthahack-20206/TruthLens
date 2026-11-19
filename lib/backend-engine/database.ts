@@ -15,6 +15,10 @@ export const isDatabaseConfigured = (): boolean => {
   return Boolean(supabaseUrl && supabaseKey && supabaseUrl.startsWith('http'))
 }
 
+export const shouldFailWithoutDatabase = (): boolean => {
+  return process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_PERSISTENCE_FALLBACK !== 'true'
+}
+
 // Global fallback directory for local or temporary serverless persistence
 const TEMP_DATA_DIR = path.join(os.tmpdir(), 'truthlens-forensics', 'data')
 
@@ -49,7 +53,11 @@ export class DatabaseService {
         this.isConfigured = false
       }
     } else {
-      logger.info('Supabase credentials not detected; using resilient atomic local/temp storage')
+      if (shouldFailWithoutDatabase()) {
+        logger.error('CRITICAL: Supabase credentials (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) are missing in production. Local persistence fallback is disabled.')
+      } else {
+        logger.info('Supabase credentials not detected; using resilient atomic local/temp storage')
+      }
     }
     ensureTempDataDir()
   }
@@ -167,6 +175,10 @@ export class DatabaseService {
         return false
       }
     }
+    if (shouldFailWithoutDatabase()) {
+      logger.error('CRITICAL: Supabase database is required in production. Refusing fallback user creation.')
+      return false
+    }
     return true
   }
 
@@ -192,6 +204,10 @@ export class DatabaseService {
         logger.error('Database createSession exception', err)
         return false
       }
+    }
+    if (shouldFailWithoutDatabase()) {
+      logger.error('CRITICAL: Supabase database is required in production. Refusing fallback session creation.')
+      return false
     }
     return true
   }
@@ -275,6 +291,10 @@ export class DatabaseService {
         logger.error('Database saveInvestigation exception', err)
         return false
       }
+    }
+    if (shouldFailWithoutDatabase()) {
+      logger.error('CRITICAL: Supabase database is required in production. Refusing fallback investigation storage.')
+      return false
     }
     return true
   }
@@ -448,6 +468,10 @@ export class DatabaseService {
         return false
       }
     }
+    if (shouldFailWithoutDatabase()) {
+      logger.error('CRITICAL: Supabase database is required in production. Refusing fallback output storage.')
+      return false
+    }
     return true
   }
 
@@ -513,6 +537,10 @@ export class DatabaseService {
         logger.error('Database saveReportMetadata exception', err)
         return false
       }
+    }
+    if (shouldFailWithoutDatabase()) {
+      logger.error('CRITICAL: Supabase database is required in production. Refusing fallback report metadata storage.')
+      return false
     }
     return true
   }

@@ -168,6 +168,18 @@ export class ModelService {
     }
 
     // 2. Local Python CLI fallback
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
+      logger.error('CRITICAL: Remote AI inference service (AI_SERVICE_URL) is required in production. Local Python CLI fallback is disabled.')
+      const errorResult = {
+        available: false,
+        vitModel: false,
+        yunetModel: false,
+        errors: ['Remote AI service (AI_SERVICE_URL) unavailable or not configured. Local Python execution disabled in production.'],
+      }
+      this.cachedAvailability = { data: errorResult, timestamp: now }
+      return errorResult
+    }
+
     try {
       const { stdout } = await execFileAsync('python', [this.scriptPath, '--action', 'ping'], {
         timeout: 10000,
@@ -220,6 +232,11 @@ export class ModelService {
     }
 
     // 2. Local Python Execution Fallback
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
+      logger.error('CRITICAL: Remote AI image inference failed or is not configured in production. Local Python fallback is disabled.')
+      return null
+    }
+
     try {
       const { stdout } = await execFileAsync(
         'python',
@@ -274,6 +291,11 @@ export class ModelService {
     }
 
     // 2. Local Python Execution Fallback
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
+      logger.error('CRITICAL: Remote AI video inference failed or is not configured in production. Local Python fallback is disabled.')
+      return null
+    }
+
     try {
       const { stdout } = await execFileAsync(
         'python',
@@ -335,6 +357,11 @@ export class ModelService {
     }
 
     // 2. Local Python Execution Fallback
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
+      logger.error('CRITICAL: Remote AI audio inference failed or is not configured in production. Local Python fallback is disabled.')
+      return null
+    }
+
     try {
       const { stdout } = await execFileAsync(
         'python',
