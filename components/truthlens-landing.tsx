@@ -106,6 +106,24 @@ export default function TruthLensLanding() {
           <a href="#demo-steps" onClick={() => setMobileOpen(false)}>Demo Guide</a>
           <a href="#forensic-science" onClick={() => setMobileOpen(false)}>Methodology</a>
           <a href="#about" onClick={() => setMobileOpen(false)}>About</a>
+          <div className="mobile-only-nav-actions">
+            <button
+              type="button"
+              className="judge-guide-trigger-btn mobile-action-btn"
+              onClick={() => { setShowJudgeGuide(true); setMobileOpen(false); }}
+              title="Open Interactive Hackathon Judge Walkthrough"
+            >
+              <Award className="h-3.5 w-3.5" />
+              <span>Judge Guide</span>
+            </button>
+            <Link className="nav-workspace-pill mobile-action-btn" href="/workspace" onClick={() => setMobileOpen(false)}>
+              Workspace <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+            <div className="mobile-auth-row">
+              <Link className="nav-login mobile-login" href="/login" onClick={() => setMobileOpen(false)}>Log in</Link>
+              <Link className="button button-dark nav-cta mobile-cta" href="/register" onClick={() => setMobileOpen(false)}>Get started</Link>
+            </div>
+          </div>
         </nav>
         <div className="nav-actions">
           <button
