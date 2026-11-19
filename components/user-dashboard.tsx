@@ -75,7 +75,7 @@ export default function UserDashboard({
     }
   }, [records])
 
-  const recentInvestigations = useMemo(() => records.slice(0, 5), [records])
+  const recentInvestigations = useMemo(() => records.slice(0, 6), [records])
   const recentReports = useMemo(
     () => records.filter((r) => Boolean(r.reportId)).slice(0, 4),
     [records]
@@ -268,10 +268,8 @@ export default function UserDashboard({
         </section>
       )}
 
-      {/* 4. Main Dual-Column Content */}
-      <div className="dashboard-content-split">
-        {/* Left Column: Recent Analysis Activities */}
-        <section className="dashboard-subpanel recent-activities-panel">
+      {/* 4. Recent Analysis Activities (Full Available Width) */}
+      <section className="dashboard-subpanel recent-activities-panel">
           <div className="panel-subheading">
             <div className="subheading-left">
               <Activity className="h-4 w-4 text-cyan-400" />
@@ -368,10 +366,10 @@ export default function UserDashboard({
           )}
         </section>
 
-        {/* Right Column: Recent Reports & Fast Launch */}
-        <div className="dashboard-right-col">
-          {/* Recent Reports Card */}
-          <section className="dashboard-subpanel recent-reports-panel">
+      {/* 5. Balanced Secondary Grid: Forensic Reports & Forensic Modality Launchpad */}
+      <div className="dashboard-secondary-grid">
+        {/* Recent Reports Card */}
+        <section className="dashboard-subpanel recent-reports-panel">
             <div className="panel-subheading">
               <div className="subheading-left">
                 <FileText className="h-4 w-4 text-emerald-400" />
@@ -461,6 +459,5 @@ export default function UserDashboard({
           </section>
         </div>
       </div>
-    </div>
-  )
-}
+    )
+  }

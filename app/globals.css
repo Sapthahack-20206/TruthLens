@@ -6274,12 +6274,28 @@ button { color: inherit; }
 .modality-bar-segment.vid { background: #6366f1; }
 .modality-bar-segment.aud { background: #f59e0b; }
 
-/* 4. Dual-Column Dashboard Layout */
+/* 4. Full-Width Recent Analysis Activities & Balanced Split Grid */
+.recent-activities-panel {
+  width: 100%;
+}
+
 .dashboard-content-split {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
   gap: 16px;
   align-items: start;
+}
+
+.dashboard-secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+  width: 100%;
+}
+
+.dashboard-secondary-grid > .dashboard-subpanel {
+  height: 100%;
 }
 
 .dashboard-subpanel {
@@ -6337,10 +6353,12 @@ button { color: inherit; }
   background: #080f20;
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 14px 18px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
   transition: all 0.15s ease;
 }
 
@@ -7171,7 +7189,8 @@ button { color: inherit; }
 }
 
 @media (max-width: 900px) {
-  .dashboard-content-split {
+  .dashboard-content-split,
+  .dashboard-secondary-grid {
     grid-template-columns: 1fr;
   }
   .dashboard-kpi-grid {
@@ -7185,6 +7204,12 @@ button { color: inherit; }
     align-items: flex-start;
   }
   .dashboard-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-secondary-grid {
+    grid-template-columns: 1fr;
+  }
+  .launchpad-grid {
     grid-template-columns: 1fr;
   }
   .history-control-bar {
@@ -7201,6 +7226,7 @@ button { color: inherit; }
   .activity-row-card {
     flex-direction: column;
     align-items: flex-start;
+    gap: 12px;
   }
   .activity-actions {
     width: 100%;
