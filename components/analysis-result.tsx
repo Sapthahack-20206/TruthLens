@@ -316,6 +316,8 @@ export default function AnalysisResult({
         note: t.label,
         description: t.description,
       })),
+      videoTimeline: result?.videoTimeline,
+      audioTimeline: result?.audioTimeline,
       mediaMetadata: {
         duration: typeof rawMeta.duration === 'number' ? rawMeta.duration : undefined,
         hasVideo,
@@ -324,7 +326,7 @@ export default function AnalysisResult({
         hasTranscript,
       },
     }
-  }, [result?.metadata, section, videoFindings, audioFindings, imageFindings, transcriptFindings, timestamps])
+  }, [result?.metadata, result?.videoTimeline, result?.audioTimeline, section, videoFindings, audioFindings, imageFindings, transcriptFindings, timestamps])
 
   const handleNavigateTimestamp = (seconds: number) => {
     const videoEl = document.querySelector('video')

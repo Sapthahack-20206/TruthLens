@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowRightLeft,
   AudioLines,
   Clock,
   Eye,
@@ -19,7 +20,7 @@ export interface EvidenceRelationship {
   target: string
   relationship: string
   explanation?: string
-  inconsistencyType?: 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'general'
+  inconsistencyType?: 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'temporal-splice' | 'facial-divergence' | 'general'
   severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
 }
 
@@ -28,12 +29,14 @@ interface EvidenceGraphProps {
   timestamps?: Array<{ timestamp: string; label?: string; description?: string; evidenceRef?: string }>
 }
 
-function detectInconsistencyType(relationship: string, explanation = ''): 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'general' {
+function detectInconsistencyType(relationship: string, explanation = ''): 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'temporal-splice' | 'facial-divergence' | 'general' {
   const text = `${relationship} ${explanation}`.toLowerCase()
+  if (text.includes('facial') || text.includes('identity') || text.includes('still') || text.includes('divergence')) return 'facial-divergence'
   if (text.includes('lip') || text.includes('viseme') || text.includes('mouth') || text.includes('sync')) return 'lip-sync'
-  if (text.includes('transcript') || text.includes('speech') || text.includes('dialogue') || text.includes('text mismatch')) return 'transcript-mismatch'
+  if (text.includes('transcript') || text.includes('speech') || text.includes('dialogue') || text.includes('text mismatch') || text.includes('lexical')) return 'transcript-mismatch'
+  if (text.includes('splice') || text.includes('cut') || text.includes('discontinuity')) return 'temporal-splice'
   if (text.includes('frame') || text.includes('artifact') || text.includes('face') || text.includes('blur') || text.includes('temporal')) return 'video-artifact'
-  if (text.includes('audio') || text.includes('voice') || text.includes('spectral') || text.includes('cut') || text.includes('vocoder')) return 'audio-manipulation'
+  if (text.includes('audio') || text.includes('voice') || text.includes('spectral') || text.includes('vocoder') || text.includes('cadence')) return 'audio-manipulation'
   return 'general'
 }
 
@@ -64,6 +67,8 @@ export default function EvidenceGraph({ relationships = [], timestamps = [] }: E
       'transcript-mismatch': enrichedRelationships.filter((r) => r.inconsistencyType === 'transcript-mismatch').length,
       'video-artifact': enrichedRelationships.filter((r) => r.inconsistencyType === 'video-artifact').length,
       'audio-manipulation': enrichedRelationships.filter((r) => r.inconsistencyType === 'audio-manipulation').length,
+      'facial-divergence': enrichedRelationships.filter((r) => r.inconsistencyType === 'facial-divergence').length,
+      'temporal-splice': enrichedRelationships.filter((r) => r.inconsistencyType === 'temporal-splice').length,
     }
   }, [enrichedRelationships])
 
@@ -130,10 +135,19 @@ export default function EvidenceGraph({ relationships = [], timestamps = [] }: E
               Audio Indicators ({counts['audio-manipulation']})
             </button>
           )}
+          {counts['facial-divergence'] > 0 && (
+            <button
+              type="button"
+              className={`corr-pill ${filterType === 'facial-divergence' ? 'active' : ''}`}
+              onClick={() => { setFilterType('facial-divergence'); setSelectedIndex(0); }}
+            >
+              Facial Divergence ({counts['facial-divergence']})
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Visual Modality Cross-Matrix Diagram */}
+      {/* Visual Modality Cross-Matrix Topological Diagram */}
       <div className="correlation-matrix-card">
         <div className="matrix-nodes-row">
           <div className="matrix-node video-node">
@@ -168,6 +182,14 @@ export default function EvidenceGraph({ relationships = [], timestamps = [] }: E
             </div>
           </div>
 
+          <div className="matrix-node image-node">
+            <Eye className="h-4 w-4 text-cyan-400" />
+            <div>
+              <strong>Image Reference</strong>
+              <span>Biometric &amp; Spectral</span>
+            </div>
+          </div>
+
           {timestamps.length > 0 && (
             <div className="matrix-node timestamp-node">
               <Clock className="h-4 w-4 text-amber-400" />
@@ -198,6 +220,8 @@ export default function EvidenceGraph({ relationships = [], timestamps = [] }: E
                   ? 'tag-video'
                   : item.inconsistencyType === 'audio-manipulation'
                   ? 'tag-audio'
+                  : item.inconsistencyType === 'facial-divergence'
+                  ? 'tag-lipsync'
                   : 'tag-general'
 
               return (
@@ -231,33 +255,39 @@ export default function EvidenceGraph({ relationships = [], timestamps = [] }: E
         {/* Selected Correlation Deep-Dive Card */}
         {selectedItem && (
           <div className="relationship-detail-column">
-            <h5 className="column-subheading">Inconsistency Analysis</h5>
+            <h5 className="column-subheading">Cross-Modal Inconsistency Analysis</h5>
             <div className="detail-card-panel">
               <div className="detail-top-bar">
                 <AlertTriangle className="h-4 w-4 text-amber-400" />
                 <strong>{selectedItem.relationship}</strong>
               </div>
+
+              {/* Side-by-side stream comparison card */}
               <div className="detail-source-target-box">
-                <div>
-                  <span className="lbl">Source Stream</span>
-                  <strong>{selectedItem.source}</strong>
+                <div className="bg-slate-900/60 p-2.5 rounded border border-slate-800">
+                  <span className="lbl text-slate-400 block text-[10px] uppercase font-semibold">Source Stream</span>
+                  <strong className="text-slate-200 text-xs">{selectedItem.source}</strong>
                 </div>
-                <div className="arrow-box">⟷</div>
-                <div>
-                  <span className="lbl">Target Stream</span>
-                  <strong>{selectedItem.target}</strong>
+                <div className="arrow-box flex items-center justify-center text-cyan-400">
+                  <ArrowRightLeft className="h-4 w-4" />
+                </div>
+                <div className="bg-slate-900/60 p-2.5 rounded border border-slate-800">
+                  <span className="lbl text-slate-400 block text-[10px] uppercase font-semibold">Target Stream</span>
+                  <strong className="text-slate-200 text-xs">{selectedItem.target}</strong>
                 </div>
               </div>
+
               {selectedItem.explanation && (
                 <div className="detail-explanation-box">
                   <span className="lbl">Observed Inconsistency:</span>
                   <p>{selectedItem.explanation}</p>
                 </div>
               )}
+
               <div className="detail-forensic-rule">
                 <Info className="h-3.5 w-3.5 text-slate-400" />
                 <span>
-                  This relationship was derived exclusively from output metrics returned by automated forensic triangulators.
+                  This relationship was derived exclusively from output metrics returned by automated forensic triangulators. Absence of detected correlation is not proof of authenticity.
                 </span>
               </div>
             </div>

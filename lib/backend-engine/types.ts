@@ -84,7 +84,7 @@ export interface EvidenceRelationship {
   target: string
   relationship: string
   explanation?: string
-  inconsistencyType?: 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'temporal-splice' | 'general'
+  inconsistencyType?: 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'temporal-splice' | 'facial-divergence' | 'general'
 }
 
 export interface SuspiciousRegion {

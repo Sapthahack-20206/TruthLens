@@ -171,9 +171,32 @@ export async function POST(req: NextRequest) {
       imageFindings: primaryResult.findings.filter((f) => f.category === 'image'),
       transcriptFindings: primaryResult.findings.filter((f) => f.category === 'transcript'),
       suspiciousTimestamps: primaryResult.suspiciousTimestamps,
+      videoTimeline: primaryResult.videoTimeline,
+      audioTimeline: primaryResult.audioTimeline,
       suppliedContext: context,
       mediaMetadata: primaryResult.metadata,
     })
+
+    // Update primaryResult with fused multimodal assessment if multi-stream correlation was performed
+    const fusion = correlationRes.summary.evidenceFusion
+    if (candidates.length > 1 || textFiles.length > 0) {
+      if (fusion.contradictionDetected) {
+        primaryResult.uncertaintyStatus = 'Likely Manipulated'
+        primaryResult.predictionCategory = 'Likely Manipulated'
+        primaryResult.confidenceScore = fusion.fusedConfidence
+        primaryResult.assessment = `Multimodal contradiction flagged: ${fusion.fusionRationale}`
+      } else if (fusion.fusedVerdict === 'Likely AI-Generated') {
+        primaryResult.uncertaintyStatus = 'Likely AI-Generated'
+        primaryResult.predictionCategory = 'Likely AI-Generated'
+        primaryResult.confidenceScore = fusion.fusedConfidence
+        primaryResult.assessment = fusion.fusionRationale
+      } else if (fusion.fusedVerdict === 'Likely Manipulated') {
+        primaryResult.uncertaintyStatus = 'Likely Manipulated'
+        primaryResult.predictionCategory = 'Likely Manipulated'
+        primaryResult.confidenceScore = Math.max(primaryResult.confidenceScore || 0, fusion.fusedConfidence)
+        primaryResult.assessment = fusion.fusionRationale
+      }
+    }
 
     for (const cf of correlationRes.combinedFindings) {
       primaryResult.evidenceRelationships.push({

@@ -119,12 +119,16 @@ export async function processAndAnalyzeMedia(
         }
         allLimitations.push(...audioRes.limitations)
         allErrors.push(...audioRes.processingErrors)
+        audioTimeline = audioRes.audioTimeline
+        audioMetrics = audioRes.audioMetrics
+        audioDirectStatus = audioRes.uncertaintyStatus
+        audioDirectAssessment = audioRes.assessment
 
         allRelationships.push({
           source: 'Video Stream (Visual)',
           target: 'Extracted Audio Track',
           relationship: 'Temporal Multiplex Alignment',
-          explanation: 'Synchronized visual frames with extracted PCM audio stream. No severe acoustic drift detected.',
+          explanation: 'Synchronized visual frames with extracted PCM audio stream. Evaluated for viseme/phoneme alignment and acoustic continuity.',
           inconsistencyType: 'general',
         })
       }
@@ -160,6 +164,8 @@ export async function processAndAnalyzeMedia(
       imageFindings: allIndicators.filter((i) => i.category === 'image'),
       transcriptFindings: allIndicators.filter((i) => i.category === 'transcript'),
       suspiciousTimestamps: allTimestamps,
+      videoTimeline,
+      audioTimeline,
       suppliedContext: cleanContext,
       mediaMetadata: metadata,
     })
@@ -187,6 +193,7 @@ export async function processAndAnalyzeMedia(
     const hasCriticalOrHigh = allIndicators.some((i) => i.severity === 'critical' || i.severity === 'high')
     const hasModerate = allIndicators.some((i) => i.severity === 'moderate')
     const maxDeepfakeScore = videoMetrics?.maxDeepfakeScore ?? 0
+    const fusion = corrResult.summary.evidenceFusion
 
     let uncertaintyStatus: import('./types').UncertaintyStatus = 'Inconclusive'
     let predictionCategory: 'Likely AI-Generated' | 'Likely Manipulated' | 'No Significant Indicators Detected' | 'Inconclusive' = 'Inconclusive'
@@ -194,16 +201,27 @@ export async function processAndAnalyzeMedia(
     let confidenceScore = 0
 
     if (detectedModality === 'video') {
-      if (hasCriticalNeural || maxDeepfakeScore >= 0.70) {
+      if (fusion.contradictionDetected) {
+        // Cross-modal contradiction detected (e.g. authentic video face + synthetic cloned voice)
+        uncertaintyStatus = 'Likely Manipulated'
+        predictionCategory = 'Likely Manipulated'
+        confidenceScore = fusion.fusedConfidence
+        assessment = `Multimodal contradiction flagged: ${fusion.fusionRationale}`
+      } else if (hasCriticalNeural || maxDeepfakeScore >= 0.70) {
         uncertaintyStatus = 'Likely AI-Generated'
         predictionCategory = 'Likely AI-Generated'
         confidenceScore = Math.max(Math.round(maxDeepfakeScore * 100), 85)
         assessment = 'Video exhibits strong neural Vision Transformer deepfake signatures and synthetic facial characteristics. Likely AI-Generated.'
-      } else if (hasCriticalOrHigh || maxDeepfakeScore >= 0.50) {
+      } else if (fusion.fusedVerdict === 'Likely AI-Generated') {
+        uncertaintyStatus = 'Likely AI-Generated'
+        predictionCategory = 'Likely AI-Generated'
+        confidenceScore = fusion.fusedConfidence
+        assessment = fusion.fusionRationale
+      } else if (hasCriticalOrHigh || maxDeepfakeScore >= 0.50 || fusion.fusedVerdict === 'Likely Manipulated') {
         uncertaintyStatus = 'Likely Manipulated'
         predictionCategory = 'Likely Manipulated'
-        confidenceScore = Math.max(Math.round(maxDeepfakeScore * 100), 72)
-        assessment = 'Video exhibits biometric boundary seams, temporal displacement, or facial manipulation indicators. Likely Manipulated.'
+        confidenceScore = Math.max(Math.round(maxDeepfakeScore * 100), fusion.fusedConfidence, 72)
+        assessment = 'Video exhibits biometric boundary seams, temporal displacement, or cross-modal manipulation indicators. Likely Manipulated.'
       } else if (allErrors.length > 0 || (!videoTimeline || videoTimeline.length < 2)) {
         uncertaintyStatus = 'Inconclusive'
         predictionCategory = 'Inconclusive'
