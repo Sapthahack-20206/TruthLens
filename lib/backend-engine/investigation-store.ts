@@ -205,7 +205,6 @@ class InvestigationStore {
     }
     return output
   }
-  }
 
   getRecord(id: string, userId?: string): InvestigationRecord | undefined {
     const validId = validateIdParam(id)

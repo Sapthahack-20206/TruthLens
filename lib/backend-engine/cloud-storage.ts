@@ -199,6 +199,42 @@ export class CloudStorageService {
   }
 
   /**
+   * Retrieves an artifact buffer and content type for streaming in API routes.
+   */
+  async getArtifact(filename: string): Promise<{ data: Buffer; contentType: string } | null> {
+    const safeBase = sanitizeFilename(filename)
+    const contentType = getMimeType(safeBase)
+
+    const supabase = databaseService?.getSupabase?.() || this.supabase
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.storage.from(this.bucketName).download(`artifacts/${safeBase}`)
+        if (!error && data) {
+          const ab = await data.arrayBuffer()
+          return { data: Buffer.from(ab), contentType }
+        }
+      } catch (err) {
+        logger.warn(`Error downloading artifact ${safeBase} from Supabase`, err)
+      }
+    }
+
+    const localCandidates = [
+      path.join(ARTIFACTS_TEMP_DIR, safeBase),
+      path.join(process.cwd(), 'public', 'forensic-output', safeBase),
+      path.join(this.localStagingDir, safeBase),
+    ]
+
+    for (const candidate of localCandidates) {
+      if (fs.existsSync(candidate)) {
+        const buf = fs.readFileSync(candidate)
+        return { data: buf, contentType }
+      }
+    }
+
+    return null
+  }
+
+  /**
    * Reads an artifact file stream or buffer from Supabase Storage or /tmp.
    */
   async getArtifactReadStream(storagePath: string): Promise<{
