@@ -14,6 +14,7 @@ import {
   FileAudio,
   FileSearch,
   FileText,
+  Film,
   Layers,
   Loader2,
   Maximize2,
@@ -891,8 +892,26 @@ export default function ForensicMediaPlayer({
             </div>
           </div>
 
-          {/* TIMELINE SCRUBBER */}
-          <div className="forensic-scrubber-row">
+          {/* TIMELINE SCRUBBER WITH SUSPICIOUS ANOMALY MARKERS */}
+          <div className="forensic-scrubber-row relative">
+            {duration > 0 && videoSuspiciousTimestamps.length > 0 && (
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 pointer-events-none flex items-center z-10 px-1">
+                {videoSuspiciousTimestamps.map((ts, idx) => {
+                  const sec = typeof ts.seconds === 'number' ? ts.seconds : 0
+                  const leftPct = Math.min(100, Math.max(0, (sec / duration) * 100))
+                  return (
+                    <span
+                      key={`player-marker-${idx}`}
+                      className={`absolute w-2 h-3.5 rounded-full -translate-x-1/2 shadow-sm ${
+                        ts.severity === 'critical' ? 'bg-red-500' : ts.severity === 'high' ? 'bg-orange-500' : 'bg-amber-400'
+                      }`}
+                      style={{ left: `${leftPct}%` }}
+                      title={`${ts.timestamp}: ${ts.label || 'Suspicious section'}`}
+                    />
+                  )
+                })}
+              </div>
+            )}
             <input
               type="range"
               min={0}
@@ -1032,6 +1051,117 @@ export default function ForensicMediaPlayer({
               </button>
             </div>
           </div>
+
+          {/* VIDEO FORENSIC TIMELINE & SUSPICIOUS FRAME EXPLORER */}
+          {isVideo && (videoTimeline.length > 0 || videoSuspiciousTimestamps.length > 0) && (
+            <section className="forensic-video-timeline-card" aria-label="Video Forensic Keyframe Timeline">
+              <div className="video-timeline-header">
+                <div className="video-timeline-title-group">
+                  <Film className="h-4 w-4 text-cyan-400" />
+                  <div>
+                    <h4 className="video-timeline-title">Video Forensic Keyframe Timeline &amp; Face Tracking</h4>
+                    <p className="video-timeline-desc">
+                      Temporal continuity &amp; OpenCV YuNet biometric face tracking · Click keyframe to seek video &amp; inspect
+                    </p>
+                  </div>
+                </div>
+                <div className="video-timeline-badges">
+                  {videoMetrics && (
+                    <>
+                      <span className="video-status-pill ready">
+                        {videoMetrics.totalFramesSampled} Frames Sampled
+                      </span>
+                      <span className="video-status-pill">
+                        {videoMetrics.facesDetectedCount} Faces Tracked
+                      </span>
+                    </>
+                  )}
+                  <span className={`video-status-pill ${videoSuspiciousTimestamps.length > 0 ? 'scanning' : 'ready'}`}>
+                    {videoSuspiciousTimestamps.length} Suspicious Keyframes
+                  </span>
+                  <span className="heuristic-badge">Heuristic Finding</span>
+                </div>
+              </div>
+
+              {/* Quick Jump Anomaly Strip */}
+              {videoSuspiciousTimestamps.length > 0 && (
+                <div className="video-anomaly-strip">
+                  <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5 mr-2">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-400" /> Jump to Flagged:
+                  </span>
+                  {videoSuspiciousTimestamps.map((ts, idx) => (
+                    <button
+                      key={`player-ts-${idx}`}
+                      type="button"
+                      className={`video-anomaly-pill ${ts.severity || 'moderate'}`}
+                      onClick={() => {
+                        const sec = typeof ts.seconds === 'number' ? ts.seconds : 0
+                        handleSeek(sec)
+                        setSelectedFrameForModal(ts)
+                      }}
+                      title={`Jump to ${ts.timestamp}: ${ts.label || ts.description}`}
+                    >
+                      <Play className="h-2.5 w-2.5 fill-current text-cyan-400" />
+                      <span className="font-mono">{ts.timestamp}</span>
+                      {ts.frameNumber && <span className="text-[9px] text-slate-400">#F{ts.frameNumber}</span>}
+                      <span>{ts.label || 'Flagged'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Scrollable Frame Timeline Strip */}
+              {videoTimeline.length > 0 && (
+                <div className="video-timeline-strip" role="region" aria-label="Keyframe timeline strip">
+                  {videoTimeline.map((frame) => {
+                    const isSelected = selectedFrameForModal && 'frameNumber' in selectedFrameForModal && selectedFrameForModal.frameNumber === frame.frameNumber
+                    const isCurrent = Math.abs(currentTime - frame.seconds) < 1.0
+                    return (
+                      <div
+                        key={`player-frame-${frame.frameNumber}`}
+                        className={`video-frame-card-node ${frame.isSuspicious ? 'is-suspicious' : ''} ${frame.severity || ''} ${isCurrent ? 'is-active' : ''}`}
+                        onClick={() => {
+                          handleSeek(frame.seconds)
+                          setSelectedFrameForModal(frame)
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        title={`Frame #${frame.frameNumber} (${frame.timestamp}): Seek & inspect`}
+                      >
+                        <div className="video-frame-thumb-box">
+                          {frame.previewThumbnail ? (
+                            <img
+                              src={frame.previewThumbnail}
+                              alt={`Frame #${frame.frameNumber}`}
+                              className="video-frame-thumb"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950 text-slate-600 text-[10px]">
+                              <Film className="h-4 w-4 mb-0.5 opacity-50" />
+                              <span>#{frame.frameNumber}</span>
+                            </div>
+                          )}
+                          {frame.isSuspicious && (
+                            <span className={`video-frame-alert-dot ${frame.severity === 'critical' ? 'critical' : ''}`} />
+                          )}
+                          {frame.faceDetected && (
+                            <span className="video-frame-face-badge" title="Face tracked via OpenCV YuNet">
+                              <ScanFace className="h-2.5 w-2.5" /> Face
+                            </span>
+                          )}
+                        </div>
+                        <div className="video-frame-meta">
+                          <span className="video-frame-time">{frame.timestamp}</span>
+                          <span className="video-frame-num">#{frame.frameNumber}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          )}
 
           {/* AUDIO WAVEFORM & FORENSIC ACOUSTIC PANEL */}
           <section className="forensic-audio-card" aria-label="Audio waveform analysis">
@@ -1438,6 +1568,113 @@ export default function ForensicMediaPlayer({
           </section>
         </div>
       </div>
+
+      {/* ENLARGED SUSPICIOUS FRAME PREVIEW MODAL */}
+      {selectedFrameForModal && (
+        <div
+          className="frame-preview-modal-backdrop"
+          onClick={() => setSelectedFrameForModal(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Enlarged frame forensic examination"
+        >
+          <div
+            className="frame-preview-modal-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="frame-modal-header">
+              <div className="flex items-center gap-2">
+                <ScanFace className="h-4 w-4 text-orange-400" />
+                <h4 className="text-sm font-semibold text-slate-100">
+                  {'frameNumber' in selectedFrameForModal && selectedFrameForModal.frameNumber
+                    ? `Frame #${selectedFrameForModal.frameNumber} Inspection`
+                    : 'Frame Forensic Inspection'}
+                </h4>
+                <span className="heuristic-badge">Heuristic Finding</span>
+              </div>
+              <button
+                type="button"
+                className="forensic-ctrl-btn icon-only"
+                onClick={() => setSelectedFrameForModal(null)}
+                aria-label="Close frame preview modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="frame-modal-img-wrap">
+              {selectedFrameForModal.previewThumbnail ? (
+                <img
+                  src={selectedFrameForModal.previewThumbnail}
+                  alt="Suspicious frame preview"
+                  className="frame-modal-img"
+                />
+              ) : (
+                <div className="p-8 text-center text-xs text-slate-400">
+                  Preview thumbnail not generated for this timestamp.
+                </div>
+              )}
+            </div>
+
+            <div className="frame-modal-body">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-cyan-400 font-semibold text-sm">
+                    {selectedFrameForModal.timestamp}
+                  </span>
+                  {'severity' in selectedFrameForModal && selectedFrameForModal.severity && (
+                    <span className={`finding-severity-pill severity-${selectedFrameForModal.severity}`}>
+                      {String(selectedFrameForModal.severity).toUpperCase()} SEVERITY
+                    </span>
+                  )}
+                  {'faceDetected' in selectedFrameForModal && selectedFrameForModal.faceDetected && (
+                    <span className="text-[10px] bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 px-2 py-0.5 rounded font-medium flex items-center gap-1">
+                      <ScanFace className="h-3 w-3" /> Face Tracked
+                    </span>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  className="forensic-pill-button primary"
+                  onClick={() => {
+                    const sec = typeof selectedFrameForModal.seconds === 'number' ? selectedFrameForModal.seconds : 0
+                    handleSeek(sec)
+                    setSelectedFrameForModal(null)
+                  }}
+                >
+                  Seek Player to Timestamp →
+                </button>
+              </div>
+
+              {'label' in selectedFrameForModal && selectedFrameForModal.label && (
+                <h5 className="text-sm font-semibold text-slate-200 mt-1">
+                  {selectedFrameForModal.label}
+                </h5>
+              )}
+
+              {'description' in selectedFrameForModal && selectedFrameForModal.description && (
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {selectedFrameForModal.description}
+                </p>
+              )}
+
+              {'metricValue' in selectedFrameForModal && selectedFrameForModal.metricValue && (
+                <div className="text-[11px] font-mono text-cyan-300 bg-slate-900/80 p-2 rounded border border-slate-800">
+                  Measured Metric: <strong>{selectedFrameForModal.metricValue}</strong>
+                </div>
+              )}
+
+              <div className="frame-modal-notice">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                <p>
+                  <strong>Forensic Caveat:</strong> Visual inconsistencies, boundary gradients, or compression shifts indicate statistical signal anomalies and do not prove manipulation. Lossy re-encoding or rapid lighting shifts can produce similar artifacts.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

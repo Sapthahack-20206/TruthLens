@@ -288,11 +288,15 @@ function UploadWorkspace({ section }: { section: string }) {
                 <span style={{ fontSize: '12px', color: '#06b6d4', fontWeight: 700 }}>{progress}%</span>
               </div>
               <span className="upload-progress-track"><span style={{ width: `${progress}%` }} /></span>
-              {scanStage && (
+              {scanStage ? (
                 <span className="dynamic-stage-badge">
                   <Activity className="h-3 w-3" /> {scanStage}
                 </span>
-              )}
+              ) : section === 'video-analysis' && busy ? (
+                <span className="dynamic-stage-badge">
+                  <Activity className="h-3 w-3" /> Extracting video frames &amp; tracking facial biometric contours…
+                </span>
+              ) : null}
             </div>
           )}
 
@@ -305,6 +309,7 @@ function UploadWorkspace({ section }: { section: string }) {
               {busy ? 'Analyzing…' : `Start ${config.label.toLowerCase()} analysis`}
               {!busy && <ArrowRight />}
             </button>
+          </div>
           </div>
         </section>
 
