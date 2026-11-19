@@ -28,6 +28,7 @@ import {
 import { getSafeVisualizationUrl, type ForensicFinding, type ForensicResponse } from '@/lib/truthlens-api'
 import EvidenceGraph, { type EvidenceRelationship } from '@/components/evidence-graph'
 import MultimodalCorrelationPanel from '@/components/multimodal-correlation-panel'
+import ExplainableEvidenceViewer from '@/components/explainable-evidence-viewer'
 import type { CorrelationInput } from '@/lib/multimodal-correlation-engine'
 import { generateForensicPdfBlob, type ForensicReportData } from '@/components/forensic-pdf-generator'
 
@@ -508,227 +509,16 @@ export default function AnalysisResult({
         )}
       </div>
 
-      {/* 3. EVIDENCE-LINKED FINDINGS */}
-      <div className="forensic-subpanel findings-section">
-        <div className="panel-subheading-row">
-          <div className="panel-subheading">
-            <FileSearch className="h-4 w-4 text-cyan-400" />
-            <div>
-              <h3>Evidence-Linked Findings ({displayedFindings.length})</h3>
-              <p>Granular observations with severity, timestamp/frame references, and examiner guidance.</p>
-            </div>
-          </div>
-
-          <div className="modality-filter-tabs">
-            <button
-              type="button"
-              className={`filter-tab ${selectedModality === 'all' ? 'active' : ''}`}
-              onClick={() => setSelectedModality('all')}
-            >
-              All ({enrichedFindings.length})
-            </button>
-            <button
-              type="button"
-              className={`filter-tab ${selectedModality === 'video' ? 'active' : ''}`}
-              onClick={() => setSelectedModality('video')}
-            >
-              Video ({videoFindings.length})
-            </button>
-            <button
-              type="button"
-              className={`filter-tab ${selectedModality === 'audio' ? 'active' : ''}`}
-              onClick={() => setSelectedModality('audio')}
-            >
-              Audio ({audioFindings.length})
-            </button>
-            <button
-              type="button"
-              className={`filter-tab ${selectedModality === 'transcript' ? 'active' : ''}`}
-              onClick={() => setSelectedModality('transcript')}
-            >
-              Transcript ({transcriptFindings.length})
-            </button>
-          </div>
-        </div>
-
-        {displayedFindings.length > 0 ? (
-          <div className="findings-detailed-grid">
-            {displayedFindings.map((finding) => (
-              <article className={`finding-detailed-card severity-${finding.severity}`} key={finding.id}>
-                <div className="finding-card-header">
-                  <div className="finding-badge-row flex flex-wrap items-center gap-2">
-                    <span className={`finding-severity-pill severity-${finding.severity}`}>
-                      {finding.severity?.toUpperCase()} SEVERITY
-                    </span>
-                    <span className="finding-modality-pill">
-                      {finding.evidenceType?.toUpperCase()}
-                    </span>
-                    {finding.isHeuristic === false ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
-                        <Sparkles className="h-3 w-3 text-cyan-400" />
-                        <span>NEURAL MODEL PREDICTION</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700">
-                        <Layers className="h-3 w-3 text-slate-400" />
-                        <span>HEURISTIC INDICATOR</span>
-                      </span>
-                    )}
-                    {finding.modelName && (
-                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-900/80 text-cyan-200 border border-slate-800">
-                        {finding.modelName}
-                      </span>
-                    )}
-                  </div>
-
-                  {finding.confidence !== undefined && (
-                    <span className="finding-confidence-score">
-                      Confidence: <strong>{displayConfidence(finding.confidence)}</strong>
-                    </span>
-                  )}
-                </div>
-
-                <h4 className="finding-title">{finding.title ?? 'Untitled Forensic Observation'}</h4>
-                {finding.description && <p className="finding-description">{finding.description}</p>}
-
-                {/* References */}
-                {(finding.timestamp || finding.evidenceRef || finding.sourceRef) && (
-                  <div className="finding-references-strip">
-                    {finding.timestamp && (
-                      <span className="ref-item">
-                        <Clock3 className="h-3.5 w-3.5 text-cyan-400" /> Timestamp: <strong>{finding.timestamp}</strong>
-                      </span>
-                    )}
-                    {finding.evidenceRef && (
-                      <span className="ref-item">
-                        <FileSearch className="h-3.5 w-3.5 text-slate-400" /> Ref: <strong>{finding.evidenceRef}</strong>
-                      </span>
-                    )}
-                    {finding.sourceRef && (
-                      <span className="ref-item text-slate-400">
-                        Source: {finding.sourceRef}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Recommended Human Review Action */}
-                {finding.humanReview && (
-                  <div className="human-review-box">
-                    <span className="review-label">Recommended Human Review:</span>
-                    <p>{finding.humanReview}</p>
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="findings-empty-notice">
-            <Info className="h-4 w-4 text-slate-400" />
-            <span>No findings returned for this category. Only verified results from analysis models are displayed.</span>
-          </div>
-        )}
-      </div>
-
-      {/* Suspicious Timestamps Section */}
-      {timestamps.length > 0 && (
-        <div className="forensic-subpanel timestamps-section">
-          <div className="panel-subheading">
-            <Clock3 className="h-4 w-4 text-amber-400" />
-            <div>
-              <h3>Flagged Temporal Points of Interest ({timestamps.length})</h3>
-              <p>Key moments where automated detectors noted potential anomalies or transitions.</p>
-            </div>
-          </div>
-          <ol className="returned-timestamps-list">
-            {timestamps.map((item, index) => (
-              <li key={`${item.timestamp}-${index}`} className="timestamp-row-card">
-                <time className="time-badge">{item.timestamp}</time>
-                <div className="time-info">
-                  <strong>{item.label ?? 'Evidence timestamp'}</strong>
-                  {item.description && <p>{item.description}</p>}
-                  {item.evidenceRef && <small className="evidence-ref-tag">Ref: {item.evidenceRef}</small>}
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-
-      {/* Suspicious Regions Section */}
-      {suspiciousRegions.length > 0 && (
-        <div className="forensic-subpanel regions-section">
-          <div className="panel-subheading">
-            <ShieldAlert className="h-4 w-4 text-rose-400" />
-            <div>
-              <h3>Detected Suspicious Facial / Image Regions ({suspiciousRegions.length})</h3>
-              <p>Localized bounding box coordinates identified with facial tampering or boundary anomalies.</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-            {suspiciousRegions.map((region) => (
-              <div key={region.id} className="p-4 rounded-xl border border-rose-500/30 bg-rose-950/20 backdrop-blur-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-rose-300">{region.label}</span>
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 border border-rose-500/30">
-                    Confidence: {region.confidence}%
-                  </span>
-                </div>
-                <p className="text-sm text-slate-300 mb-2 leading-relaxed">{region.description}</p>
-                <div className="text-xs font-mono text-cyan-300/80 bg-slate-900/60 p-2 rounded border border-slate-800">
-                  Bounding Box: [x: {region.box[0]}, y: {region.box[1]}, w: {region.box[2]}, h: {region.box[3]}]
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Visualizations (if returned) */}
-      {visualizations.length > 0 && (
-        <div className="forensic-subpanel visualizations-section">
-          <div className="panel-subheading">
-            <Eye className="h-4 w-4 text-cyan-400" />
-            <div>
-              <h3>Forensic Visualizations &amp; Heatmaps</h3>
-              <p>Visual evidence overlays generated by deepfake and artifact detectors.</p>
-            </div>
-          </div>
-          <div className="visualization-grid">
-            {visualizations.map((item, index) => {
-              const source = getSafeVisualizationUrl(item.url)
-              return (
-                <figure className="forensic-visualization" key={`${item.label}-${index}`}>
-                  {source ? (
-                    <img src={source} alt={item.label} />
-                  ) : (
-                    <div className="visualization-unavailable">Visualisation not hosted on current origin.</div>
-                  )}
-                  <figcaption>{item.label}</figcaption>
-                </figure>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Technical Limitations */}
-      {limitations.length > 0 && (
-        <div className="forensic-subpanel limitations-section">
-          <div className="panel-subheading">
-            <AlertCircle className="h-4 w-4 text-slate-400" />
-            <div>
-              <h3>Technical Limitations &amp; Uncertainty Boundaries</h3>
-              <p>Known detection constraints applicable to this media sample.</p>
-            </div>
-          </div>
-          <ul className="returned-limitations">
-            {limitations.map((item, index) => (
-              <li key={`${item}-${index}`}>{item}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* 3. EXPLAINABLE AI & EVIDENCE VIEWER */}
+      <ExplainableEvidenceViewer
+        findings={displayedFindings}
+        timestamps={timestamps}
+        suspiciousRegions={suspiciousRegions}
+        visualizations={visualizations}
+        limitations={limitations}
+        onNavigateTimestamp={handleNavigateTimestamp}
+        mediaType={section}
+      />
 
       {/* Processing Errors / Warnings */}
       {processingErrors.length > 0 && (
