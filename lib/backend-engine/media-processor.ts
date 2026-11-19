@@ -262,7 +262,8 @@ export function getFfmpegPath(): string {
   try {
     // 1. Try ffmpeg-static package
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const ffmpegStatic = require('ffmpeg-static')
+    const dynamicRequire = eval('require')
+    const ffmpegStatic = dynamicRequire('ffmpeg-static')
     if (ffmpegStatic && typeof ffmpegStatic === 'string' && fs.existsSync(ffmpegStatic)) {
       cachedFfmpegPath = ensureExecutable(ffmpegStatic)
       return cachedFfmpegPath

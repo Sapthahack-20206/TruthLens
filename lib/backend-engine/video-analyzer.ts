@@ -71,6 +71,7 @@ function runPythonForensicAnalyzer(
 
     const pyCmd = process.env.PYTHON_PATH || 'python'
     const pyProcess = spawn(
+      /*turbopackIgnore: true*/
       pyCmd,
       [scriptPath, videoPath, ffmpegPath, String(fps), String(maxFrames)],
       { stdio: ['ignore', 'pipe', 'pipe'] }
