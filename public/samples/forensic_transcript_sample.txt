@@ -1,0 +1,4 @@
+[00:00.00 - 00:02.50] Hello and welcome to TruthLens forensic investigation.
+[00:02.50 - 00:05.00] In this session, we are analyzing synthetic biometric facial signals and acoustic waveform cues.
+[00:05.00 - 00:07.80] Notice the speaker facial contour alignment across consecutive 24 fps frames.
+[00:07.80 - 00:10.00] Cross-modal correlation verifies lip-sync alignment and lexical consistency.

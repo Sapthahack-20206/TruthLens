@@ -122,9 +122,13 @@ export default function UserDashboard({
               <span>Refresh</span>
             </button>
           )}
-          <Link href="/workspace?section=image-analysis" className="btn-dash-primary">
+          <Link href="/workspace?section=video-analysis" className="btn-dash-primary">
             <Plus className="h-4 w-4" />
-            <span>New Analysis</span>
+            <span>New Video Scan</span>
+          </Link>
+          <Link href="/workspace?section=cross-modal" className="btn-dash-primary" style={{ background: '#0284c7' }}>
+            <Layers className="h-4 w-4" />
+            <span>Tri-Modal Scan</span>
           </Link>
         </div>
       </section>

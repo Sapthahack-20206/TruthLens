@@ -3,9 +3,38 @@
 import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowDown, ArrowRight, AudioLines, Check, ChevronDown, FileImage, FileSearch, FileText, Fingerprint, LoaderCircle, Menu, Paperclip, ScanLine, ShieldCheck, Sparkles, Upload, Video, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowRight,
+  AudioLines,
+  Award,
+  Check,
+  ChevronDown,
+  Clock,
+  FileCheck,
+  FileImage,
+  FileSearch,
+  FileText,
+  Fingerprint,
+  Layers,
+  LoaderCircle,
+  Menu,
+  Paperclip,
+  Play,
+  ScanFace,
+  ScanLine,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  Video,
+  X,
+  Zap,
+} from 'lucide-react'
 import TruthLensRobot from '@/components/truthlens-robot'
+import JudgeDemoGuide from '@/components/judge-demo-guide'
 import { createInvestigation } from '@/lib/truthlens-api'
+import { DEMO_PRESETS, loadDemoSampleFile, loadDemoMultimodalBundle, JUDGE_DEMO_STEPS } from '@/lib/demo-samples'
 
 const LOGO_URL = 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/TruthLens%20Aperture%20Logo-Zh8uJ1dIwq1yd1IEsjzn4BDgWzmMQA.png'
 
@@ -33,6 +62,8 @@ export default function TruthLensLanding() {
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [showJudgeGuide, setShowJudgeGuide] = useState(false)
+  const [loadingPreset, setLoadingPreset] = useState<string | null>(null)
 
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return
@@ -40,9 +71,29 @@ export default function TruthLensLanding() {
     setError('')
   }
 
+  const handleLoadPreset = async (presetKey: 'video' | 'audio' | 'image' | 'cross-modal') => {
+    setLoadingPreset(presetKey)
+    setError('')
+    try {
+      if (presetKey === 'cross-modal') {
+        const { files: bundleFiles, context } = await loadDemoMultimodalBundle()
+        setFiles(bundleFiles)
+        setPrompt(context)
+      } else {
+        const file = await loadDemoSampleFile(presetKey)
+        setFiles([file])
+        setPrompt(DEMO_PRESETS[presetKey].context)
+      }
+    } catch {
+      setError('Unable to load demo sample file from server. You can select local files using the upload button.')
+    } finally {
+      setLoadingPreset(null)
+    }
+  }
+
   const startInvestigation = async () => {
     if (!files.length) {
-      setError('Choose at least one file to start an investigation.')
+      setError('Choose at least one file or select a Hackathon Demo Preset to start.')
       fileInput.current?.click()
       return
     }
@@ -73,15 +124,33 @@ export default function TruthLensLanding() {
           <a href="#product" onClick={() => setMobileOpen(false)}>Product</a>
           <a href="#features" onClick={() => setMobileOpen(false)}>Features</a>
           <a href="#how-it-works" onClick={() => setMobileOpen(false)}>How it works</a>
-          <a href="#research" onClick={() => setMobileOpen(false)}>Research</a>
+          <a href="#demo-steps" onClick={() => setMobileOpen(false)}>Demo Guide</a>
+          <a href="#forensic-science" onClick={() => setMobileOpen(false)}>Methodology</a>
           <a href="#about" onClick={() => setMobileOpen(false)}>About</a>
         </nav>
         <div className="nav-actions">
+          <button
+            type="button"
+            className="judge-guide-trigger-btn"
+            onClick={() => setShowJudgeGuide(true)}
+            title="Open Interactive Hackathon Judge Walkthrough"
+          >
+            <Award className="h-3.5 w-3.5" />
+            <span>Judge Guide</span>
+          </button>
+          <Link className="nav-workspace-pill" href="/workspace">
+            Workspace <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
           <Link className="nav-login" href="/login">Log in</Link>
-          <a className="nav-contact" href="mailto:hello@truthlens.ai">Contact us</a>
           <Link className="button button-dark nav-cta" href="/register">Get started</Link>
         </div>
-        <button className="mobile-menu-button" type="button" aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileOpen} onClick={() => setMobileOpen((open) => !open)}>
+        <button
+          className="mobile-menu-button"
+          type="button"
+          aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={mobileOpen}
+          onClick={() => setMobileOpen((open) => !open)}
+        >
           {mobileOpen ? <X /> : <Menu />}
         </button>
       </header>
@@ -90,12 +159,70 @@ export default function TruthLensLanding() {
         <div className="hero-copy">
           <p className="eyebrow"><span className="eyebrow-dot" /> DIGITAL FORENSICS, MADE CLEAR</p>
           <h1>See Beyond the Surface.</h1>
-          <p className="hero-subtitle">Detect digital manipulation, analyse suspicious media, and uncover the evidence behind what you see and hear.</p>
+          <p className="hero-subtitle">
+            Detect digital manipulation, analyse suspicious media, and uncover the verifiable evidence behind what you see and hear.
+          </p>
         </div>
 
         <div className="prompt-card" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files) }}>
+          {/* Quick Hackathon Demo Presets Strip */}
+          <div className="landing-preset-strip">
+            <span className="preset-label">
+              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+              <strong>1-Click Hackathon Presets:</strong>
+            </span>
+            <div className="preset-buttons">
+              <button
+                type="button"
+                className="btn-preset-pill vid"
+                onClick={() => handleLoadPreset('video')}
+                disabled={loadingPreset !== null || busy}
+                title="Load 10s 720p interview video deepfake"
+              >
+                <Video className="h-3.5 w-3.5 text-sky-400" />
+                <span>{loadingPreset === 'video' ? 'Loading…' : 'Video Deepfake (MP4)'}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-preset-pill aud"
+                onClick={() => handleLoadPreset('audio')}
+                disabled={loadingPreset !== null || busy}
+                title="Load 16kHz speech sample with silence gap drops"
+              >
+                <AudioLines className="h-3.5 w-3.5 text-indigo-400" />
+                <span>{loadingPreset === 'audio' ? 'Loading…' : 'Voice Clone (WAV)'}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-preset-pill img"
+                onClick={() => handleLoadPreset('image')}
+                disabled={loadingPreset !== null || busy}
+                title="Load high-res portrait for ELA inspection"
+              >
+                <FileImage className="h-3.5 w-3.5 text-rose-400" />
+                <span>{loadingPreset === 'image' ? 'Loading…' : 'Portrait Keyframe (JPG)'}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-preset-pill multi"
+                onClick={() => handleLoadPreset('cross-modal')}
+                disabled={loadingPreset !== null || busy}
+                title="Load synchronized Video + Audio + Transcript bundle"
+              >
+                <Fingerprint className="h-3.5 w-3.5 text-emerald-400" />
+                <span>{loadingPreset === 'cross-modal' ? 'Loading…' : 'Tri-Modal Case Bundle'}</span>
+              </button>
+            </div>
+          </div>
+
           <label className="sr-only" htmlFor="investigation-prompt">Describe the media you want to investigate</label>
-          <textarea id="investigation-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Describe or upload the media you want to investigate..." rows={2} />
+          <textarea
+            id="investigation-prompt"
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Describe or upload the media you want to investigate, or click a preset above..."
+            rows={2}
+          />
           {files.length > 0 && (
             <div className="selected-files" aria-live="polite">
               {files.map((file, index) => (
@@ -138,6 +265,37 @@ export default function TruthLensLanding() {
         </div>
       </section>
 
+      {/* JUDGE DEMONSTRATION WORKFLOW SECTION (Requirement 13) */}
+      <section className="section judge-flow-section" id="demo-steps">
+        <div className="section-heading">
+          <p className="eyebrow"><Award className="inline-block h-3.5 w-3.5 text-amber-400 mr-1" /> HACKATHON EVALUATION GUIDE</p>
+          <h2>Recommended Judge Demonstration Workflow</h2>
+          <p>Follow our structured 7-step evaluation path to observe every dimension of TruthLens from ingestion to certified report.</p>
+        </div>
+        <div className="feature-grid">
+          {JUDGE_DEMO_STEPS.map((s) => (
+            <article className="feature-card" key={s.step}>
+              <span className="feature-index">0{s.step}</span>
+              <h3>{s.title.split(':')[0]}</h3>
+              <p>{s.description}</p>
+              <div className="mt-3 text-xs text-cyan-300 font-medium">
+                ✓ Criterion: {s.evaluationCriterion}
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="text-center mt-6">
+          <button
+            type="button"
+            className="button button-dark"
+            onClick={() => setShowJudgeGuide(true)}
+          >
+            <Award className="h-4 w-4 mr-2 text-amber-400" />
+            Launch Interactive Judge Walkthrough
+          </button>
+        </div>
+      </section>
+
       <section className="section feature-section" id="features">
         <div className="section-heading">
           <p className="eyebrow">ONE WORKSPACE, EVERY SIGNAL</p>
@@ -157,10 +315,45 @@ export default function TruthLensLanding() {
         </div>
       </section>
 
+      {/* FORENSIC METHODOLOGY: HOW TRUTHLENS WORKS (Requirement 12) */}
+      <section className="section process-section" id="forensic-science">
+        <div className="section-heading section-heading-left">
+          <p className="eyebrow">FORENSIC SCIENCE &amp; ARCHITECTURE</p>
+          <h2>How TruthLens Works Behind the Screen</h2>
+          <p>Unlike opaque black-box detectors, TruthLens evaluates physical and signal-processing artifacts across multiple independent engines.</p>
+        </div>
+        <div className="steps-list">
+          <article className="step-row">
+            <span className="step-number">01</span>
+            <h3>Facial Boundary Edge Disparity (Video)</h3>
+            <p>Sobel gradient filters analyze the pixel edge transition between facial masks and the background. Deepfake face-swaps consistently leave subtle blending seams and alpha gradient mismatch.</p>
+            <Check aria-hidden="true" />
+          </article>
+          <article className="step-row">
+            <span className="step-number">02</span>
+            <h3>Spectral Laplacian Ringing (GAN Artifacts)</h3>
+            <p>Generative Adversarial Networks (GANs) and diffusion models exhibit high-frequency ringing and sharpness disparity (measured via Laplacian edge variance ratios up to 9.6x) relative to camera sensor noise floors.</p>
+            <Check aria-hidden="true" />
+          </article>
+          <article className="step-row">
+            <span className="step-number">03</span>
+            <h3>Acoustic Silence Splicing &amp; Voice Synthesis (Audio)</h3>
+            <p>Speech synthesizers and voice clones often display unnatural pitch contour stability, lack natural room acoustic reverberation, and introduce abrupt digital silence drops where speech tokens terminate.</p>
+            <Check aria-hidden="true" />
+          </article>
+          <article className="step-row">
+            <span className="step-number">04</span>
+            <h3>Tri-Modal Cross-Verification (Lip-Sync &amp; Transcripts)</h3>
+            <p>Phoneme audio timing is correlated with viseme facial mouth contours and sworn witness transcripts to detect temporal drift, replaced dialogue, or desynchronized footage.</p>
+            <Check aria-hidden="true" />
+          </article>
+        </div>
+      </section>
+
       <section className="section process-section" id="how-it-works">
         <div className="section-heading section-heading-left">
           <p className="eyebrow">A CLEARER PATH FROM FILE TO FINDING</p>
-          <h2>How it works</h2>
+          <h2>Investigation Workflow</h2>
           <p>Move from source material to a structured, reviewable record — without skipping the details.</p>
         </div>
         <div className="steps-list">
@@ -208,7 +401,7 @@ export default function TruthLensLanding() {
           <h2>Look closer. Understand more.</h2>
           <p>Bring your media into one careful, explainable workflow.</p>
         </div>
-        <Link className="button button-dark" href="/register">Get started <ArrowRight aria-hidden="true" /></Link>
+        <Link className="button button-dark" href="/workspace">Launch Workspace <ArrowRight aria-hidden="true" /></Link>
       </section>
 
       <footer className="site-footer">
@@ -220,6 +413,13 @@ export default function TruthLensLanding() {
         <nav aria-label="Footer navigation"><a href="#about">About</a><a href="#features">Features</a><a href="mailto:hello@truthlens.ai">Contact</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
         <span className="copyright">© 2026 TruthLens. For informed review, not absolute proof.</span>
       </footer>
+
+      {/* Interactive Judge Demo Guide Modal */}
+      <JudgeDemoGuide
+        isOpen={showJudgeGuide}
+        onClose={() => setShowJudgeGuide(false)}
+      />
     </main>
   )
 }
+

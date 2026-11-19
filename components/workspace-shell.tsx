@@ -5,9 +5,11 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import {
+  Activity,
   AlertCircle,
   ArrowRight,
   AudioLines,
+  Award,
   Bell,
   ChevronDown,
   Download,
@@ -18,8 +20,10 @@ import {
   LoaderCircle,
   LogOut,
   Menu,
+  Play,
   Plus,
   ShieldCheck,
+  Sparkles,
   UserRound,
   Video,
   X,
@@ -42,6 +46,8 @@ import MediaPreview, { useMediaPreviewUrl } from '@/components/media-preview'
 import MediaUpload from '@/components/media-upload'
 import UserDashboard from '@/components/user-dashboard'
 import AnalysisHistory from '@/components/analysis-history'
+import JudgeDemoGuide from '@/components/judge-demo-guide'
+import { DEMO_PRESETS, loadDemoSampleFile, loadDemoMultimodalBundle } from '@/lib/demo-samples'
 
 const LOGO_URL = 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/TruthLens%20Aperture%20Logo-Zh8uJ1dIwq1yd1IEsjzn4BDgWzmMQA.png'
 
@@ -103,6 +109,8 @@ function UploadWorkspace({ section }: { section: string }) {
   const [context, setContext] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<number | null>(null)
+  const [scanStage, setScanStage] = useState('')
+  const [loadingPreset, setLoadingPreset] = useState(false)
   const [message, setMessage] = useState('')
   const [response, setResponse] = useState<unknown>(null)
   const config = supportedTypes[section] ?? supportedTypes['cross-modal']
@@ -137,17 +145,55 @@ function UploadWorkspace({ section }: { section: string }) {
     setMessage('Transcript content synced into investigation context.')
   }
 
+  const handleLoadSample = async () => {
+    setLoadingPreset(true)
+    setMessage('')
+    setResponse(null)
+    try {
+      if (section === 'cross-modal') {
+        const { files: bundleFiles, context: defaultContext } = await loadDemoMultimodalBundle()
+        setFiles(bundleFiles)
+        setContext(defaultContext)
+      } else {
+        const presetKey = section === 'video-analysis' ? 'video' : section === 'audio-analysis' ? 'audio' : 'image'
+        const file = await loadDemoSampleFile(presetKey)
+        setFiles([file])
+        setContext(DEMO_PRESETS[presetKey].context)
+      }
+      setMessage(`Benchmark sample for ${config.label.toLowerCase()} staged. Click "Start ${config.label.toLowerCase()} analysis" below to begin.`)
+    } catch {
+      setMessage('Could not load sample asset from server. You can select a local file using the upload area.')
+    } finally {
+      setLoadingPreset(false)
+    }
+  }
+
   const submit = async () => {
     if (!files.length) {
-      setMessage('Stage at least one supported digital evidence file to proceed.')
+      setMessage('Stage at least one supported digital evidence file or load a benchmark sample to proceed.')
       return
     }
     setBusy(true)
     setProgress(0)
+    setScanStage('Verifying SHA-256 cryptographic chain of custody...')
     setMessage('')
     setResponse(null)
     try {
-      const onProgress = (value: number) => setProgress(value)
+      const onProgress = (value: number) => {
+        setProgress(value)
+        if (value < 25) {
+          setScanStage('Verifying SHA-256 cryptographic chain of custody...')
+        } else if (value < 50) {
+          setScanStage('Probing container headers & extracting keyframe sequences...')
+        } else if (value < 75) {
+          setScanStage('Tracking facial boundaries, spectral textures & acoustic waveforms...')
+        } else if (value < 100) {
+          setScanStage('Correlating cross-modal signals & compiling forensic telemetry...')
+        } else {
+          setScanStage('Analysis complete. Rendering evidence suite.')
+        }
+      }
+
       const result = section === 'image-analysis'
         ? await analyzeImage(files[0], context, onProgress)
         : section === 'video-analysis'
@@ -157,11 +203,13 @@ function UploadWorkspace({ section }: { section: string }) {
             : await analyzeCrossModal(files, context, onProgress)
       setResponse(result)
       setProgress(100)
+      setScanStage('Analysis complete.')
       setMessage('The configured analysis service responded. Only returned evidence is shown below.')
       mutate('truthlens-investigations')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The analysis service is unavailable.')
       setProgress(null)
+      setScanStage('')
     } finally {
       setBusy(false)
     }
@@ -180,6 +228,26 @@ function UploadWorkspace({ section }: { section: string }) {
           </div>
           <p className="panel-intro">Upload original files and share any context or transcripts that may help reviewers verify authenticity.</p>
 
+          {/* Quick Hackathon Demo Preset Banner */}
+          <div className="workspace-preset-banner">
+            <div className="workspace-preset-info">
+              <Sparkles className="h-4 w-4 text-amber-400 flex-shrink-0" />
+              <span>
+                <strong>Hackathon Evaluation Preset Available</strong>
+                <small>Quickly stage verified benchmark evidence for {config.label.toLowerCase()} analysis.</small>
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn-load-preset"
+              onClick={handleLoadSample}
+              disabled={loadingPreset || busy}
+            >
+              {loadingPreset ? <LoaderCircle className="spinning h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              <span>{loadingPreset ? 'Loading…' : `Load Benchmark ${config.label} Sample`}</span>
+            </button>
+          </div>
+
           <MediaUpload
             files={files}
             onFilesChange={handleFilesChange}
@@ -197,6 +265,7 @@ function UploadWorkspace({ section }: { section: string }) {
               onSelectIndex={setActiveFileIndex}
               onRemoveFile={handleRemoveFile}
               onSyncContext={handleSyncContext}
+              response={response}
             />
           )}
 
@@ -212,9 +281,18 @@ function UploadWorkspace({ section }: { section: string }) {
 
           {progress !== null && (
             <div className="upload-progress" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
-              <span>{busy && progress < 100 ? 'Uploading source' : busy ? 'Processing response' : 'Upload complete'}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontWeight: 600, color: '#f1f5f9', fontSize: '13px' }}>
+                  {busy && progress < 100 ? 'Running Forensic Pipeline' : busy ? 'Finalizing Telemetry' : 'Analysis Complete'}
+                </span>
+                <span style={{ fontSize: '12px', color: '#06b6d4', fontWeight: 700 }}>{progress}%</span>
+              </div>
               <span className="upload-progress-track"><span style={{ width: `${progress}%` }} /></span>
-              <span>{progress}%</span>
+              {scanStage && (
+                <span className="dynamic-stage-badge">
+                  <Activity className="h-3 w-3" /> {scanStage}
+                </span>
+              )}
             </div>
           )}
 
@@ -572,6 +650,8 @@ export default function WorkspaceShell() {
     ? user.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
     : 'T'
 
+  const [showJudgeGuide, setShowJudgeGuide] = useState(false)
+
   return (
     <main className="workspace-shell">
       <header className="app-nav">
@@ -597,6 +677,15 @@ export default function WorkspaceShell() {
         </nav>
 
         <div className="app-nav-actions">
+          <button
+            type="button"
+            className="judge-guide-trigger-btn"
+            onClick={() => setShowJudgeGuide(true)}
+            title="Open Interactive Judge Walkthrough"
+          >
+            <Award className="h-3.5 w-3.5 text-amber-400" />
+            <span>Judge Guide</span>
+          </button>
           <button type="button" className="icon-button" aria-label="Notifications" disabled>
             <Bell />
           </button>
@@ -666,6 +755,11 @@ export default function WorkspaceShell() {
           <Link href="mailto:support@truthlens.ai">Examiner Support</Link>
         </footer>
       </div>
+
+      <JudgeDemoGuide
+        isOpen={showJudgeGuide}
+        onClose={() => setShowJudgeGuide(false)}
+      />
     </main>
   )
 }

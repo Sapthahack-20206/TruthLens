@@ -82,11 +82,20 @@ export default function MediaPreview({
   const activeIndex = controlledIndex !== undefined ? controlledIndex : internalIndex
   const safeIndex = Math.min(Math.max(0, activeIndex), Math.max(0, files.length - 1))
   const currentFile = files[safeIndex]
+  const category = currentFile ? getEvidenceCategory(currentFile) : 'unknown'
+  const ext = currentFile ? getFileExtension(currentFile.name).toUpperCase() : ''
 
   const selectIndex = (index: number) => {
     setInternalIndex(index)
     onSelectIndex?.(index)
   }
+
+  // Auto-launch interactive forensic HUD when analysis response arrives
+  useEffect(() => {
+    if (response && (category === 'video' || category === 'audio')) {
+      setShowAdvancedForensicPlayer(true)
+    }
+  }, [response, category])
 
   // SHA-256 Forensic Hash
   const [fileHash, setFileHash] = useState<string>('Computing hash…')
@@ -114,24 +123,23 @@ export default function MediaPreview({
     setTimeout(() => setCopiedHash(false), 2000)
   }
 
-  const category = currentFile ? getEvidenceCategory(currentFile) : 'unknown'
-  const ext = currentFile ? getFileExtension(currentFile.name).toUpperCase() : ''
-
   if (!currentFile || files.length === 0) return null
 
   // If user explicitly launched advanced forensic media player for video/audio
   if ((category === 'video' || category === 'audio') && showAdvancedForensicPlayer) {
     return (
       <div className="advanced-player-wrapper">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '0 4px' }}>
           <button
             type="button"
             className="staged-subtle-btn"
             onClick={() => setShowAdvancedForensicPlayer(false)}
           >
-            ← Return to Evidence Preview
+            ← Standard File View
           </button>
-          <span style={{ fontSize: '11px', color: '#666' }}>Interactive Forensic Player Active</span>
+          <span style={{ fontSize: '11px', color: '#06b6d4', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+            <Sparkles className="h-3 w-3" /> Interactive Forensic Player &amp; HUD Active
+          </span>
         </div>
         <ForensicMediaPlayer file={currentFile} forensicOutput={response as any} />
       </div>
@@ -200,10 +208,11 @@ export default function MediaPreview({
               type="button"
               className="evidence-action-btn"
               onClick={() => setShowAdvancedForensicPlayer(true)}
-              title="Launch full forensic audio/video player with live transcript"
+              title="Launch full forensic audio/video player with live transcript, timeline & telemetry"
+              style={{ background: 'rgba(6, 182, 212, 0.15)', borderColor: 'rgba(6, 182, 212, 0.4)', color: '#22d3ee' }}
             >
-              <Sparkles className="action-icon text-orange-600" />
-              <span>Forensic Player</span>
+              <Sparkles className="action-icon text-cyan-400" />
+              <span>Forensic HUD Player</span>
             </button>
           )}
 

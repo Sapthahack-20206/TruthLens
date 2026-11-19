@@ -188,6 +188,21 @@ export default function AuthScreen({ mode }: { mode: AuthMode }) {
             {!busy && <ArrowRight />}
           </button>
 
+          {mode === 'login' && (
+            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <button
+                type="button"
+                className="button button-outline"
+                style={{ width: '100%', fontSize: '12px', color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.35)', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                onClick={handleQuickDemoLogin}
+                disabled={busy}
+              >
+                <UserCheck className="h-3.5 w-3.5 text-cyan-400" />
+                <span>1-Click Hackathon Demo Sign-In (Analyst)</span>
+              </button>
+            </div>
+          )}
+
           {notice && <p className="form-feedback error" role="alert">{notice}</p>}
           {successNotice && <p className="form-feedback success" role="status">{successNotice}</p>}
         </form>
