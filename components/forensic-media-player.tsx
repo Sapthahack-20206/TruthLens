@@ -4,11 +4,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   AudioLines,
   Camera,
   CheckCircle2,
   Clock,
+  Download,
   Eye,
+  FileAudio,
   FileSearch,
   FileText,
   Layers,
@@ -28,6 +31,15 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react'
+import {
+  analyzeAudioBuffer,
+  audioBufferToWav,
+  extractAudioFromBlob,
+  type AudioForensicProfile,
+  type AudioForensicReport,
+  type SuspiciousAudioSegment,
+} from '@/lib/audio-forensics'
+import { formatBytes } from '@/lib/evidence-utils'
 
 export type TranscriptLine = {
   id: string
@@ -80,8 +92,9 @@ export default function ForensicMediaPlayer({
   const [mediaUrl, setMediaUrl] = useState<string>(srcUrl ?? '')
   const [mediaTitle, setMediaTitle] = useState<string>(title ?? file?.name ?? 'Sample Forensic Media')
   const [isVideo, setIsVideo] = useState<boolean>(true)
+  const [currentFile, setCurrentFile] = useState<File | undefined>(file)
 
-  // Video Playback State
+  // Playback State
   const [isPlaying, setIsPlaying] = useState<boolean>(false)
   const [currentTime, setCurrentTime] = useState<number>(0)
   const [duration, setDuration] = useState<number>(0)
@@ -89,22 +102,29 @@ export default function ForensicMediaPlayer({
   const [isMuted, setIsMuted] = useState<boolean>(false)
   const [playbackRate, setPlaybackRate] = useState<number>(1)
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false)
-  const [videoResolution, setVideoResolution] = useState<{ width: number; height: number }>({ width: 1920, height: 1080 })
+  const [videoResolution, setVideoResolution] = useState<{ width: number; height: number }>({
+    width: 1920,
+    height: 1080,
+  })
   const [estimatedFps] = useState<number>(30)
 
-  // Audio Waveform State
+  // Audio Waveform & Analysis State
   const [waveformPeaks, setWaveformPeaks] = useState<number[]>([])
   const [isAudioDecoding, setIsAudioDecoding] = useState<boolean>(false)
   const [audioDecoded, setAudioDecoded] = useState<boolean>(false)
   const [liveAudioRms, setLiveAudioRms] = useState<number>(0)
+  const [audioReport, setAudioReport] = useState<AudioForensicReport | null>(null)
+  const [extractedWavBlob, setExtractedWavBlob] = useState<Blob | null>(null)
+  const [extractedWavUrl, setExtractedWavUrl] = useState<string | null>(null)
+  const [audioErrorMessage, setAudioErrorMessage] = useState<string | null>(null)
 
   // Transcript State
   const [transcript, setTranscript] = useState<TranscriptLine[]>(initialTranscript)
   const [transcriptSearch, setTranscriptSearch] = useState<string>('')
   const [autoScroll, setAutoScroll] = useState<boolean>(true)
-  const [transcriptSource, setTranscriptSource] = useState<'backend' | 'user' | 'speech-api' | 'none'>(
-    initialTranscript.length > 0 ? 'backend' : 'none'
-  )
+  const [transcriptSource, setTranscriptSource] = useState<
+    'backend' | 'user' | 'speech-api' | 'none'
+  >(initialTranscript.length > 0 ? 'backend' : 'none')
   const [isListeningSpeech, setIsListeningSpeech] = useState<boolean>(false)
   const [speechApiSupported, setSpeechApiSupported] = useState<boolean>(false)
 
@@ -125,21 +145,31 @@ export default function ForensicMediaPlayer({
   // Snapshot State
   const [snapshotNotice, setSnapshotNotice] = useState<string | null>(null)
 
+  // Clean up object URLs
+  useEffect(() => {
+    return () => {
+      if (extractedWavUrl) URL.revokeObjectURL(extractedWavUrl)
+    }
+  }, [extractedWavUrl])
+
   // Resolve media URL from prop or File
   useEffect(() => {
     if (file) {
+      setCurrentFile(file)
       const url = URL.createObjectURL(file)
       setMediaUrl(url)
       setMediaTitle(file.name)
       setIsVideo(file.type.startsWith('video/') || !file.type.startsWith('audio/'))
       return () => URL.revokeObjectURL(url)
     } else if (srcUrl) {
+      setCurrentFile(undefined)
       setMediaUrl(srcUrl)
       setMediaTitle(title ?? 'Forensic Media Stream')
-      setIsVideo(!srcUrl.endsWith('.mp3') && !srcUrl.endsWith('.wav'))
+      setIsVideo(!srcUrl.endsWith('.mp3') && !srcUrl.endsWith('.wav') && !srcUrl.endsWith('.m4a'))
     } else {
       // Default to bundled forensic video sample
       const sampleUrl = '/videos/gemini_generated_video_a5be6a4a.mp4'
+      setCurrentFile(undefined)
       setMediaUrl(sampleUrl)
       setMediaTitle('TruthLens Forensic Sample (gemini_generated_video.mp4)')
       setIsVideo(true)
@@ -154,25 +184,33 @@ export default function ForensicMediaPlayer({
     }
   }, [])
 
-  // Extract Audio Waveform using Web Audio API
+  // Extract Audio Waveform and run Forensic Acoustic Preprocessing
   useEffect(() => {
     let isCancelled = false
 
-    async function extractWaveform() {
+    async function extractAndAnalyzeAudio() {
       if (!mediaUrl) return
       setIsAudioDecoding(true)
-      try {
-        const response = await fetch(mediaUrl)
-        const arrayBuffer = await response.arrayBuffer()
-        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-        if (!AudioContextClass) return
+      setAudioErrorMessage(null)
 
-        const audioCtx = new AudioContextClass()
-        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
+      try {
+        let blobToDecode: Blob
+        if (currentFile) {
+          blobToDecode = currentFile
+        } else {
+          const resp = await fetch(mediaUrl)
+          blobToDecode = await resp.blob()
+        }
+
         if (isCancelled) return
 
+        // 1. Decode AudioBuffer from video or audio file
+        const audioBuffer = await extractAudioFromBlob(blobToDecode)
+        if (isCancelled) return
+
+        // 2. Generate raw waveform peaks for visualization
         const channelData = audioBuffer.getChannelData(0)
-        const totalSamples = 120
+        const totalSamples = 140
         const step = Math.floor(channelData.length / totalSamples)
         const peaks: number[] = []
 
@@ -180,7 +218,7 @@ export default function ForensicMediaPlayer({
           let max = 0
           const start = i * step
           const end = Math.min(start + step, channelData.length)
-          for (let j = start; j < end; j += 8) {
+          for (let j = start; j < end; j += 6) {
             const val = Math.abs(channelData[j])
             if (val > max) max = val
           }
@@ -189,19 +227,38 @@ export default function ForensicMediaPlayer({
 
         const maxPeak = Math.max(...peaks, 0.001)
         const normalized = peaks.map((p) => Math.max(0.08, p / maxPeak))
+
+        // 3. Run Deep Audio Forensic Analysis (clipping, silence dropouts, SNR, splice points)
+        const report = analyzeAudioBuffer(audioBuffer)
+
+        // 4. Create authentic WAV blob for video extraction download
+        const wavBlob = audioBufferToWav(audioBuffer)
+        const wavUrl = URL.createObjectURL(wavBlob)
+
         if (!isCancelled) {
           setWaveformPeaks(normalized)
+          setAudioReport(report)
+          setExtractedWavBlob(wavBlob)
+          setExtractedWavUrl(wavUrl)
           setAudioDecoded(true)
+
+          setScanStats((prev) => ({
+            ...prev,
+            anomaliesFound: report.suspiciousSegments.length,
+            confidenceScore: Math.round(100 - report.suspiciousSegments.length * 6),
+          }))
         }
-        audioCtx.close().catch(() => {})
-      } catch {
-        // Fallback synthetic acoustic pattern if direct decode fails
+      } catch (err) {
         if (!isCancelled) {
+          const errText = err instanceof Error ? err.message : String(err)
+          setAudioErrorMessage(errText)
+
+          // Fallback acoustic representation
           const fallbackPeaks = Array.from({ length: 120 }, (_, i) => {
             const t = i / 120
             const envelope = Math.sin(t * Math.PI)
-            const noise = (Math.sin(i * 12.3) * 0.4 + Math.cos(i * 7.9) * 0.3 + 0.3)
-            return Math.max(0.1, Math.min(1, envelope * noise))
+            const noise = Math.sin(i * 12.3) * 0.4 + Math.cos(i * 7.9) * 0.3 + 0.3
+            return Math.max(0.08, Math.min(1, envelope * noise))
           })
           setWaveformPeaks(fallbackPeaks)
           setAudioDecoded(true)
@@ -211,11 +268,12 @@ export default function ForensicMediaPlayer({
       }
     }
 
-    extractWaveform()
+    extractAndAnalyzeAudio()
+
     return () => {
       isCancelled = true
     }
-  }, [mediaUrl])
+  }, [mediaUrl, currentFile])
 
   // Synchronized playback updates
   const handleTimeUpdate = useCallback(() => {
@@ -223,7 +281,6 @@ export default function ForensicMediaPlayer({
     const time = videoRef.current.currentTime
     setCurrentTime(time)
 
-    // Simulate subtle RMS fluctuation for decibel indicator
     if (isPlaying) {
       const idx = Math.floor((time / (duration || 1)) * waveformPeaks.length)
       const currentPeak = waveformPeaks[idx] ?? 0.3
@@ -250,7 +307,10 @@ export default function ForensicMediaPlayer({
       videoRef.current.pause()
       setIsPlaying(false)
     } else {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {})
+      videoRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => {})
     }
   }, [isPlaying])
 
@@ -331,7 +391,7 @@ export default function ForensicMediaPlayer({
     }
   }
 
-  // Draw Audio Waveform onto Canvas
+  // Draw Audio Waveform onto Canvas with Suspicious Segment Markers
   useEffect(() => {
     const canvas = waveformCanvasRef.current
     if (!canvas || waveformPeaks.length === 0) return
@@ -354,12 +414,40 @@ export default function ForensicMediaPlayer({
     const progressRatio = duration > 0 ? currentTime / duration : 0
     const activeBarIndex = Math.floor(progressRatio * barCount)
 
+    const suspicious = audioReport?.suspiciousSegments ?? []
+
+    // 1. Draw suspicious anomaly zone background bands on waveform
+    if (duration > 0) {
+      suspicious.forEach((seg) => {
+        const startX = (seg.startTime / duration) * width
+        const endX = (seg.endTime / duration) * width
+        const segWidth = Math.max(4, endX - startX)
+
+        ctx.fillStyle = seg.severity === 'high' ? 'rgba(234, 88, 12, 0.28)' : 'rgba(249, 115, 22, 0.18)'
+        ctx.fillRect(startX, 0, segWidth, height)
+
+        // Top alert bar marker
+        ctx.fillStyle = '#ea580c'
+        ctx.fillRect(startX, 0, segWidth, 3)
+      })
+    }
+
+    // 2. Draw amplitude bars
     waveformPeaks.forEach((peak, i) => {
       const x = i * (barWidth + gap)
       const barHeight = Math.max(4, peak * (height - 12))
       const y = (height - barHeight) / 2
+      const barTime = (i / barCount) * (duration || 1)
 
-      if (i <= activeBarIndex) {
+      // Check if this bar falls inside a suspicious anomaly zone
+      const isInsideSuspicious = suspicious.some(
+        (seg) => barTime >= seg.startTime && barTime <= seg.endTime
+      )
+
+      if (isInsideSuspicious) {
+        // Highlighted suspicious anomaly bar
+        ctx.fillStyle = i <= activeBarIndex ? '#ea580c' : '#c2410c'
+      } else if (i <= activeBarIndex) {
         // Played bars: cyan/blue gradient
         ctx.fillStyle = '#06b6d4'
       } else {
@@ -368,11 +456,11 @@ export default function ForensicMediaPlayer({
       }
 
       ctx.beginPath()
-      ctx.roundRect(x, y, barWidth, barHeight, 1.5)
+      ctx.roundRect ? ctx.roundRect(x, y, barWidth, barHeight, 1.5) : ctx.rect(x, y, barWidth, barHeight)
       ctx.fill()
     })
 
-    // Draw playhead line
+    // 3. Draw playhead line
     const playheadX = progressRatio * width
     ctx.strokeStyle = '#38bdf8'
     ctx.lineWidth = 2
@@ -380,7 +468,7 @@ export default function ForensicMediaPlayer({
     ctx.moveTo(playheadX, 0)
     ctx.lineTo(playheadX, height)
     ctx.stroke()
-  }, [currentTime, duration, waveformPeaks])
+  }, [currentTime, duration, waveformPeaks, audioReport])
 
   // Waveform click to seek
   const handleWaveformClick = (e: React.MouseEvent<HTMLElement>) => {
@@ -394,7 +482,9 @@ export default function ForensicMediaPlayer({
 
   // Find currently active transcript line
   const activeTranscriptLine = useMemo(() => {
-    return transcript.find((line) => currentTime >= line.startTime && currentTime <= line.endTime)
+    return transcript.find(
+      (line) => currentTime >= line.startTime && currentTime <= line.endTime
+    )
   }, [currentTime, transcript])
 
   // Auto-scroll transcript container to active line
@@ -411,13 +501,15 @@ export default function ForensicMediaPlayer({
   const filteredTranscript = useMemo(() => {
     if (!transcriptSearch.trim()) return transcript
     const q = transcriptSearch.toLowerCase()
-    return transcript.filter((item) => item.text.toLowerCase().includes(q) || item.speaker?.toLowerCase().includes(q))
+    return transcript.filter(
+      (item) => item.text.toLowerCase().includes(q) || item.speaker?.toLowerCase().includes(q)
+    )
   }, [transcript, transcriptSearch])
 
   // Import custom transcript (VTT / SRT / Plain text)
   const handleTranscriptFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const importedFile = e.target.files?.[0]
+    if (!importedFile) return
     const reader = new FileReader()
     reader.onload = (event) => {
       const content = event.target?.result as string
@@ -429,10 +521,12 @@ export default function ForensicMediaPlayer({
       let tempStart = 0
       let tempEnd = 0
 
-      // Simple parser for VTT / SRT timestamps (00:01.200 --> 00:04.500 or 00:00:01,200 --> 00:00:04,500)
+      // Parser for VTT / SRT timestamps (00:01.200 --> 00:04.500 or 00:00:01,200 --> 00:00:04,500)
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim()
-        const timeMatch = line.match(/(?:(\d{2}):)?(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})[,.](\d{3})/)
+        const timeMatch = line.match(
+          /(?:(\d{2}):)?(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})[,.](\d{3})/
+        )
         if (timeMatch) {
           const sHours = parseInt(timeMatch[1] || '0', 10)
           const sMins = parseInt(timeMatch[2], 10)
@@ -445,12 +539,20 @@ export default function ForensicMediaPlayer({
           const eSecs = parseInt(timeMatch[7], 10)
           const eMs = parseInt(timeMatch[8], 10)
           tempEnd = eHours * 3600 + eMins * 60 + eSecs + eMs / 1000
-        } else if (tempEnd > tempStart && line.length > 0 && !/^\d+$/.test(line) && !line.startsWith('WEBVTT')) {
+        } else if (
+          tempEnd > tempStart &&
+          line.length > 0 &&
+          !/^\d+$/.test(line) &&
+          !line.startsWith('WEBVTT')
+        ) {
           parsed.push({
             id: `imported-${currentId++}`,
             startTime: tempStart,
             endTime: tempEnd,
-            speaker: line.startsWith('[') && line.includes(']') ? line.slice(1, line.indexOf(']')) : 'Speaker 01',
+            speaker:
+              line.startsWith('[') && line.includes(']')
+                ? line.slice(1, line.indexOf(']'))
+                : 'Speaker 01',
             text: line.replace(/^\[.*?\]\s*/, ''),
             confidence: 96.5,
           })
@@ -478,13 +580,15 @@ export default function ForensicMediaPlayer({
         setTranscriptSource('user')
       }
     }
-    reader.readAsText(file)
+    reader.readAsText(importedFile)
   }
 
   // Live Speech Recognition using Web Speech API
   const toggleSpeechRecognition = () => {
     if (!speechApiSupported) return
-    const SpeechRecognitionClass = (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition ||
+    const SpeechRecognitionClass =
+      (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown })
+        .SpeechRecognition ||
       (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition
 
     if (!SpeechRecognitionClass) return
@@ -513,9 +617,9 @@ export default function ForensicMediaPlayer({
             ...prev,
             {
               id: `speech-${Date.now()}`,
-              startTime: start,
-              endTime: end,
-              speaker: 'Audio Channel A',
+              startTime: Math.round(start * 100) / 100,
+              endTime: Math.round(end * 100) / 100,
+              speaker: 'Audio Track',
               text,
               confidence: Math.round(latestResult[0].confidence * 100) || 94,
             },
@@ -548,14 +652,16 @@ export default function ForensicMediaPlayer({
     setAudioScanStatus('pending')
     setTranscriptScanStatus('pending')
 
-    // Automatically start playback during scanning
     if (videoRef.current && !isPlaying) {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {})
+      videoRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => {})
     }
 
     let progress = 0
     const interval = setInterval(() => {
-      progress += 2
+      progress += 4
       setScanProgress(progress)
 
       if (progress >= 35 && progress < 70) {
@@ -572,16 +678,19 @@ export default function ForensicMediaPlayer({
         setTranscriptScanStatus('completed')
         setScanStats({
           fps: 29.97,
-          anomaliesFound: 1,
-          confidenceScore: 97.4,
+          anomaliesFound: audioReport?.suspiciousSegments.length ?? 0,
+          confidenceScore: audioReport
+            ? Math.round(100 - audioReport.suspiciousSegments.length * 5)
+            : 96,
           lastScannedTimestamp: new Date().toLocaleTimeString(),
         })
       }
-    }, 120)
+    }, 100)
   }
 
   const loadSampleVideo = () => {
     const sample = '/videos/gemini_generated_video_a5be6a4a.mp4'
+    setCurrentFile(undefined)
     setMediaUrl(sample)
     setMediaTitle('TruthLens Forensic Sample (gemini_generated_video.mp4)')
     setIsVideo(true)
@@ -593,7 +702,7 @@ export default function ForensicMediaPlayer({
       <div className="forensic-header-bar">
         <div className="forensic-title-group">
           <span className="forensic-tag">
-            <Activity className="h-3 w-3 text-cyan-400 animate-pulse" /> FORENSIC MEDIA SUITE
+            <Activity className="h-3 w-3 text-cyan-400 animate-pulse" /> ADVANCED FORENSIC MEDIA SUITE
           </span>
           <h3 className="forensic-media-title" title={mediaTitle}>
             {mediaTitle}
@@ -601,6 +710,19 @@ export default function ForensicMediaPlayer({
         </div>
 
         <div className="forensic-header-actions">
+          {/* If video is loaded, offer extracted WAV download */}
+          {isVideo && extractedWavUrl && (
+            <a
+              href={extractedWavUrl}
+              download={`truthlens-extracted-audio-${mediaTitle.replace(/[^a-zA-Z0-9_-]/g, '_')}.wav`}
+              className="forensic-pill-button"
+              title="Download extracted uncompressed 16-bit PCM audio track from video"
+            >
+              <Download className="h-3.5 w-3.5 text-cyan-400" />
+              <span>Extracted Audio (WAV)</span>
+            </a>
+          )}
+
           <input
             ref={fileInputRef}
             type="file"
@@ -609,6 +731,7 @@ export default function ForensicMediaPlayer({
             onChange={(e) => {
               const selected = e.target.files?.[0]
               if (selected) {
+                setCurrentFile(selected)
                 const url = URL.createObjectURL(selected)
                 setMediaUrl(url)
                 setMediaTitle(selected.name)
@@ -641,11 +764,17 @@ export default function ForensicMediaPlayer({
         </div>
       )}
 
+      {audioErrorMessage && (
+        <div className="forensic-alert-banner" style={{ background: '#450a0a', borderColor: '#7f1d1d' }}>
+          <AlertTriangle className="h-4 w-4 text-orange-400" /> {audioErrorMessage}
+        </div>
+      )}
+
       {/* Main Two-Column Layout */}
       <div className="forensic-layout-grid">
         {/* LEFT COLUMN: Large Video Player + Controls + Audio Waveform */}
         <div className="forensic-left-column">
-          {/* VIDEO CONTAINER */}
+          {/* VIDEO / AUDIO CONTAINER */}
           <div className="forensic-video-wrapper">
             <video
               ref={videoRef}
@@ -664,7 +793,7 @@ export default function ForensicMediaPlayer({
                 <div className="scan-laser-line" />
                 <div className="scan-grid-lines" />
                 <div className="scan-telemetry-badge">
-                  <span>FRAME {(Math.floor(currentTime * estimatedFps)).toString().padStart(5, '0')}</span>
+                  <span>FRAME {Math.floor(currentTime * estimatedFps).toString().padStart(5, '0')}</span>
                   <span>SYNC: LOCKED</span>
                 </div>
               </div>
@@ -674,9 +803,9 @@ export default function ForensicMediaPlayer({
             <div className="forensic-video-hud">
               <div className="hud-badge-left">
                 <span className={`status-dot ${isPlaying ? 'live' : 'paused'}`} />
-                <span>{isPlaying ? 'ACTIVE' : 'HOLD'}</span>
+                <span>{isPlaying ? 'PLAYING' : 'PAUSED'}</span>
                 <span className="hud-divider">|</span>
-                <span>{videoResolution.width}x{videoResolution.height}</span>
+                <span>{isVideo ? `${videoResolution.width}x${videoResolution.height}` : 'AUDIO STREAM'}</span>
                 <span className="hud-divider">|</span>
                 <span>{estimatedFps} FPS</span>
               </div>
@@ -770,7 +899,11 @@ export default function ForensicMediaPlayer({
                   onClick={toggleMute}
                   aria-label={isMuted ? 'Unmute' : 'Mute'}
                 >
-                  {isMuted || volume === 0 ? <VolumeX className="h-4 w-4 text-red-400" /> : <Volume2 className="h-4 w-4" />}
+                  {isMuted || volume === 0 ? (
+                    <VolumeX className="h-4 w-4 text-red-400" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )}
                 </button>
                 <input
                   type="range"
@@ -799,15 +932,17 @@ export default function ForensicMediaPlayer({
               </div>
 
               {/* Frame Capture Snapshot */}
-              <button
-                type="button"
-                className="forensic-ctrl-btn icon-only"
-                onClick={captureFrame}
-                title="Capture forensic frame snapshot"
-                aria-label="Capture snapshot"
-              >
-                <Camera className="h-4 w-4" />
-              </button>
+              {isVideo && (
+                <button
+                  type="button"
+                  className="forensic-ctrl-btn icon-only"
+                  onClick={captureFrame}
+                  title="Capture forensic frame snapshot"
+                  aria-label="Capture snapshot"
+                >
+                  <Camera className="h-4 w-4" />
+                </button>
+              )}
 
               {/* Fullscreen */}
               <button
@@ -822,14 +957,16 @@ export default function ForensicMediaPlayer({
             </div>
           </div>
 
-          {/* AUDIO WAVEFORM & ANALYSIS PANEL */}
+          {/* AUDIO WAVEFORM & FORENSIC ACOUSTIC PANEL */}
           <section className="forensic-audio-card" aria-label="Audio waveform analysis">
             <div className="audio-card-header">
               <div className="audio-header-left">
                 <AudioLines className="h-4 w-4 text-cyan-400" />
                 <div>
-                  <h4 className="audio-card-title">Acoustic Waveform Analysis</h4>
-                  <p className="audio-card-desc">Synchronized multi-channel audio stream</p>
+                  <h4 className="audio-card-title">Acoustic Signal &amp; Anomaly Waveform</h4>
+                  <p className="audio-card-desc">
+                    {isVideo ? 'Extracted PCM audio stream from video' : 'Native audio file telemetry'} · Click waveform or anomaly to seek
+                  </p>
                 </div>
               </div>
 
@@ -838,35 +975,98 @@ export default function ForensicMediaPlayer({
                   LEVEL: <strong>{isPlaying ? `${liveAudioRms} dBFS` : '-INF'}</strong>
                 </span>
                 <span className={`audio-status-pill ${audioDecoded ? 'ready' : 'decoding'}`}>
-                  {isAudioDecoding ? 'EXTRACTING AUDIO…' : audioDecoded ? 'PCM AUDIO READY' : 'STREAM ATTACHED'}
+                  {isAudioDecoding
+                    ? 'EXTRACTING AUDIO…'
+                    : audioDecoded
+                    ? 'PCM ANALYSIS READY'
+                    : 'ATTACHING STREAM'}
                 </span>
               </div>
             </div>
 
-            {/* Interactive Canvas Waveform */}
-            <div className="waveform-canvas-container" onClick={handleWaveformClick} title="Click to seek audio">
+            {/* Interactive Canvas Waveform with Suspicious Anomaly Zone Overlays */}
+            <div
+              className="waveform-canvas-container"
+              onClick={handleWaveformClick}
+              title="Click on the waveform to seek audio playback position"
+            >
               <canvas ref={waveformCanvasRef} className="waveform-canvas" />
             </div>
 
+            {/* Forensic Anomaly Legend & Jump Pills */}
+            {audioReport && audioReport.suspiciousSegments.length > 0 && (
+              <div className="audio-anomaly-strip">
+                <span className="anomaly-legend-label">
+                  <AlertTriangle className="h-3 w-3 text-orange-400" /> Flagged Segments ({audioReport.suspiciousSegments.length}):
+                </span>
+                <div className="anomaly-pills-list">
+                  {audioReport.suspiciousSegments.map((seg) => (
+                    <button
+                      key={seg.id}
+                      type="button"
+                      className={`anomaly-jump-pill ${seg.severity}`}
+                      onClick={() => handleSeek(seg.startTime)}
+                      title={`Jump to ${seg.label} at ${formatTimecode(seg.startTime)}: ${seg.description}`}
+                    >
+                      <span className="pill-dot" />
+                      <span className="pill-time">{formatTimecode(seg.startTime)}</span>
+                      <span className="pill-type">{seg.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Audio Forensic Telemetry Grid */}
+            {audioReport && (
+              <div className="audio-telemetry-grid">
+                <div className="telemetry-cell">
+                  <span className="cell-label">Sample Rate</span>
+                  <strong className="cell-val">{(audioReport.profile.sampleRate / 1000).toFixed(1)} kHz</strong>
+                </div>
+                <div className="telemetry-cell">
+                  <span className="cell-label">Noise Floor</span>
+                  <strong className="cell-val">{audioReport.profile.noiseFloorDbfs} dBFS</strong>
+                </div>
+                <div className="telemetry-cell">
+                  <span className="cell-label">Signal-to-Noise (SNR)</span>
+                  <strong className={`cell-val ${audioReport.profile.snrDb < 12 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {audioReport.profile.snrDb} dB
+                  </strong>
+                </div>
+                <div className="telemetry-cell">
+                  <span className="cell-label">Dynamic Range</span>
+                  <strong className="cell-val">{audioReport.profile.dynamicRangeDb} dB</strong>
+                </div>
+                <div className="telemetry-cell">
+                  <span className="cell-label">Peak Clipping</span>
+                  <strong className={`cell-val ${audioReport.profile.clippingCount > 0 ? 'text-orange-400' : 'text-slate-300'}`}>
+                    {audioReport.profile.clippingCount} samples
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            {/* Background noise notice if applicable */}
+            {audioReport?.backgroundNoiseNote && (
+              <div className="audio-noise-alert">
+                <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+                <span>{audioReport.backgroundNoiseNote}</span>
+              </div>
+            )}
+
             <div className="waveform-footer">
               <div className="audio-metadata-chips">
-                <span className="chip">CHANNELS: 2 (STEREO)</span>
-                <span className="chip">SAMPLE RATE: 48.0 kHz</span>
+                <span className="chip">CHANNELS: {audioReport?.profile.numberOfChannels === 1 ? '1 (MONO)' : '2 (STEREO)'}</span>
                 <span className="chip">PRECISION: 32-BIT FLOAT</span>
+                <span className="chip">ANOMALIES: {audioReport?.suspiciousSegments.length ?? 0}</span>
               </div>
               <div className="audio-actions-row">
-                <button
-                  type="button"
-                  className="waveform-quick-btn"
-                  onClick={togglePlay}
-                >
-                  {isPlaying ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />} {isPlaying ? 'Pause Audio' : 'Play Audio'}
+                <button type="button" className="waveform-quick-btn" onClick={togglePlay}>
+                  {isPlaying ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}{' '}
+                  {isPlaying ? 'Pause Audio' : 'Play Audio'}
                 </button>
-                <button
-                  type="button"
-                  className="waveform-quick-btn"
-                  onClick={toggleMute}
-                >
+                <button type="button" className="waveform-quick-btn" onClick={toggleMute}>
                   {isMuted ? 'Unmute Audio' : 'Mute Audio'}
                 </button>
               </div>
@@ -905,9 +1105,21 @@ export default function ForensicMediaPlayer({
             </div>
 
             {/* Overall Scanning Progress Bar */}
-            <div className="scan-progress-wrap" role="progressbar" aria-valuenow={scanProgress} aria-valuemin={0} aria-valuemax={100}>
+            <div
+              className="scan-progress-wrap"
+              role="progressbar"
+              aria-valuenow={scanProgress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               <div className="scan-progress-label">
-                <span>{isScanning ? 'Multi-track inspection in progress' : scanProgress === 100 ? 'Deep scan completed' : 'Pipeline ready'}</span>
+                <span>
+                  {isScanning
+                    ? 'Multi-track inspection in progress'
+                    : scanProgress === 100
+                    ? 'Deep scan completed'
+                    : 'Pipeline ready'}
+                </span>
                 <span>{scanProgress}%</span>
               </div>
               <div className="scan-progress-track">
@@ -922,11 +1134,17 @@ export default function ForensicMediaPlayer({
                 <div className="modality-top">
                   <span className="modality-name">VIDEO ANALYSIS</span>
                   {videoScanStatus === 'completed' ? (
-                    <span className="status-badge completed"><CheckCircle2 className="h-3 w-3" /> COMPLETED</span>
+                    <span className="status-badge completed">
+                      <CheckCircle2 className="h-3 w-3" /> COMPLETED
+                    </span>
                   ) : videoScanStatus === 'processing' ? (
-                    <span className="status-badge processing"><Loader2 className="h-3 w-3 animate-spin" /> SCANNING</span>
+                    <span className="status-badge processing">
+                      <Loader2 className="h-3 w-3 animate-spin" /> SCANNING
+                    </span>
                   ) : (
-                    <span className="status-badge pending"><Clock className="h-3 w-3" /> PENDING</span>
+                    <span className="status-badge pending">
+                      <Clock className="h-3 w-3" /> PENDING
+                    </span>
                   )}
                 </div>
                 <p className="modality-desc">Temporal continuity, face consistency, artifact anomalies</p>
@@ -935,16 +1153,24 @@ export default function ForensicMediaPlayer({
               {/* 2. Audio Analysis Status */}
               <div className={`modality-status-card ${audioScanStatus}`}>
                 <div className="modality-top">
-                  <span className="modality-name">AUDIO ANALYSIS</span>
+                  <span className="modality-name">AUDIO FORENSICS</span>
                   {audioScanStatus === 'completed' ? (
-                    <span className="status-badge completed"><CheckCircle2 className="h-3 w-3" /> COMPLETED</span>
+                    <span className="status-badge completed">
+                      <CheckCircle2 className="h-3 w-3" /> COMPLETED
+                    </span>
                   ) : audioScanStatus === 'processing' ? (
-                    <span className="status-badge processing"><Loader2 className="h-3 w-3 animate-spin" /> ANALYZING</span>
+                    <span className="status-badge processing">
+                      <Loader2 className="h-3 w-3 animate-spin" /> ANALYZING
+                    </span>
                   ) : (
-                    <span className="status-badge pending"><Clock className="h-3 w-3" /> PENDING</span>
+                    <span className="status-badge pending">
+                      <Clock className="h-3 w-3" /> PENDING
+                    </span>
                   )}
                 </div>
-                <p className="modality-desc">Synthetic voice patterns, acoustic envelope, spectral cuts</p>
+                <p className="modality-desc">
+                  {audioReport?.veracitySummary ?? 'Acoustic envelope, clipping detection, spectral cuts'}
+                </p>
               </div>
 
               {/* 3. Transcript Status */}
@@ -952,11 +1178,17 @@ export default function ForensicMediaPlayer({
                 <div className="modality-top">
                   <span className="modality-name">TRANSCRIPT ALIGNMENT</span>
                   {transcriptScanStatus === 'completed' ? (
-                    <span className="status-badge completed"><CheckCircle2 className="h-3 w-3" /> SYNCHRONIZED</span>
+                    <span className="status-badge completed">
+                      <CheckCircle2 className="h-3 w-3" /> SYNCHRONIZED
+                    </span>
                   ) : transcriptScanStatus === 'processing' ? (
-                    <span className="status-badge processing"><Loader2 className="h-3 w-3 animate-spin" /> ALIGNING</span>
+                    <span className="status-badge processing">
+                      <Loader2 className="h-3 w-3 animate-spin" /> ALIGNING
+                    </span>
                   ) : (
-                    <span className="status-badge pending"><Clock className="h-3 w-3" /> PENDING</span>
+                    <span className="status-badge pending">
+                      <Clock className="h-3 w-3" /> PENDING
+                    </span>
                   )}
                 </div>
                 <p className="modality-desc">Phoneme alignment, dialog verification, speech timestamps</p>
@@ -965,9 +1197,16 @@ export default function ForensicMediaPlayer({
 
             {/* Telemetry Summary Bar */}
             <div className="pipeline-telemetry-strip">
-              <span>SCAN SPEED: <strong>{scanStats.fps} fps</strong></span>
-              <span>ANOMALIES FLAGGED: <strong>{scanStats.anomaliesFound}</strong></span>
-              <span>VERACITY CONFIDENCE: <strong>{scanStats.confidenceScore ? `${scanStats.confidenceScore}%` : '—'}</strong></span>
+              <span>
+                SCAN SPEED: <strong>{scanStats.fps} fps</strong>
+              </span>
+              <span>
+                ANOMALIES FLAGGED: <strong>{scanStats.anomaliesFound}</strong>
+              </span>
+              <span>
+                VERACITY CONFIDENCE:{' '}
+                <strong>{scanStats.confidenceScore ? `${scanStats.confidenceScore}%` : '—'}</strong>
+              </span>
             </div>
           </section>
 
@@ -999,9 +1238,9 @@ export default function ForensicMediaPlayer({
                     type="button"
                     className={`transcript-toggle-pill ${isListeningSpeech ? 'listening' : ''}`}
                     onClick={toggleSpeechRecognition}
-                    title="Live transcription using browser speech recognition"
+                    title="Live speech transcription using browser ASR model"
                   >
-                    <Mic className="h-3 w-3" /> {isListeningSpeech ? 'Listening…' : 'Speech API'}
+                    <Mic className="h-3 w-3" /> {isListeningSpeech ? 'Listening…' : 'Speech ASR'}
                   </button>
                 )}
 
@@ -1054,7 +1293,7 @@ export default function ForensicMediaPlayer({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') handleSeek(item.startTime)
                         }}
-                        title={`Click to seek to ${formatTimecode(item.startTime)}`}
+                        title={`Click to seek audio to ${formatTimecode(item.startTime)}`}
                       >
                         <div className="line-meta">
                           <span className="line-timestamp">
@@ -1077,9 +1316,10 @@ export default function ForensicMediaPlayer({
                   <div className="empty-icon-ring">
                     <FileSearch className="h-5 w-5 text-slate-400" />
                   </div>
-                  <h5>Speech Transcription Unavailable</h5>
+                  <h5>Speech Transcription Awaiting Input</h5>
                   <p>
-                    No automated transcript was returned by the connected analysis endpoint. TruthLens adheres to forensic integrity and does not fabricate unverified spoken dialogue.
+                    TruthLens maintains strict evidentiary standards and does not generate synthetic transcripts.
+                    Start the speech recognition model or import verified spoken dialogue.
                   </p>
                   <div className="empty-options">
                     <button
@@ -1095,7 +1335,7 @@ export default function ForensicMediaPlayer({
                         className="forensic-pill-button secondary"
                         onClick={toggleSpeechRecognition}
                       >
-                        <Mic className="h-3.5 w-3.5" /> Start Speech API listener
+                        <Mic className="h-3.5 w-3.5" /> Start Speech ASR Model
                       </button>
                     )}
                   </div>
@@ -1106,18 +1346,18 @@ export default function ForensicMediaPlayer({
             {/* Transcript Footer Status */}
             <div className="transcript-footer">
               <span className="source-label">
-                SOURCE:{' '}
+                MODEL / SOURCE:{' '}
                 <strong>
                   {transcriptSource === 'backend'
-                    ? 'Connected API'
+                    ? 'Connected Backend ASR'
                     : transcriptSource === 'user'
-                    ? 'Imported VTT/SRT'
+                    ? 'Imported VTT/SRT File'
                     : transcriptSource === 'speech-api'
-                    ? 'Browser Speech Recognition'
-                    : 'Awaiting Service'}
+                    ? 'Browser Speech Recognition Model'
+                    : 'Awaiting Dialogue'}
                 </strong>
               </span>
-              <span className="hint-label">Click any timestamp to seek</span>
+              <span className="hint-label">Click any dialogue timestamp to seek</span>
             </div>
           </section>
         </div>

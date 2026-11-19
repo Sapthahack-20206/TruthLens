@@ -4384,3 +4384,158 @@ button { color: inherit; }
   }
 }
 
+/* ==========================================================================
+   Advanced Audio Forensic Analysis & Anomaly Segment Highlights
+   ========================================================================== */
+
+.advanced-player-wrapper {
+  margin-top: 16px;
+  animation: fadeIn 0.2s ease;
+}
+
+.audio-anomaly-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #090d16;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  margin-top: 6px;
+}
+
+.anomaly-legend-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ea580c;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.anomaly-pills-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.anomaly-jump-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.anomaly-jump-pill:hover {
+  background: #334155;
+  border-color: #06b6d4;
+  transform: translateY(-1px);
+}
+
+.anomaly-jump-pill.high {
+  border-color: rgba(234, 88, 12, 0.5);
+  background: rgba(234, 88, 12, 0.12);
+}
+
+.anomaly-jump-pill.medium {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.anomaly-jump-pill .pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ea580c;
+  flex-shrink: 0;
+}
+
+.anomaly-jump-pill .pill-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.anomaly-jump-pill .pill-type {
+  font-weight: 600;
+  font-size: 10.5px;
+}
+
+.audio-telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.telemetry-cell {
+  background: #090d16;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.telemetry-cell .cell-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: #64748b;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.telemetry-cell .cell-val {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #f1f5f9;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-noise-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 7px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: #fcd34d;
+  line-height: 1.4;
+  margin-top: 6px;
+}
+
+@media (max-width: 850px) {
+  .audio-telemetry-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .audio-telemetry-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .audio-anomaly-strip {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
