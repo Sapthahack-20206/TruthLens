@@ -47,6 +47,36 @@ export function generateForensicPdfReport(response: ForensicResponse): Buffer {
     lines.push('')
   }
 
+  const anyResponse = response as any
+  if (anyResponse.transcription && anyResponse.transcription.length > 0) {
+    lines.push('SPOKEN DIALOGUE TRANSCRIPT & SPEAKER BREAKDOWN:')
+    if (anyResponse.speakerMetrics?.speakers) {
+      lines.push(`  - Distinct Speakers:        ${anyResponse.speakerMetrics.totalSpeakers || anyResponse.speakerMetrics.speakers.length}`)
+      for (const spk of anyResponse.speakerMetrics.speakers) {
+        lines.push(`    * ${spk.label}: ${spk.segmentCount} segments, ${spk.totalSpokenSeconds}s spoken${spk.avgPitchHz ? `, F0: ${spk.avgPitchHz} Hz` : ''}`)
+      }
+    }
+    if (anyResponse.transcriptMetrics) {
+      lines.push(`  - Total Words Transcribed:  ${anyResponse.transcriptMetrics.totalWords}`)
+      lines.push(`  - Active Speech Duration:   ${anyResponse.transcriptMetrics.spokenDurationSec}s (${Math.round((anyResponse.transcriptMetrics.speechRatio || 0) * 100)}% speech ratio)`)
+      if (anyResponse.transcriptMetrics.wer !== null && anyResponse.transcriptMetrics.wer !== undefined) {
+        lines.push(`  - Word Error Rate (WER):    ${anyResponse.transcriptMetrics.wer}%`)
+      }
+      if (anyResponse.transcriptMetrics.cer !== null && anyResponse.transcriptMetrics.cer !== undefined) {
+        lines.push(`  - Character Error Rate(CER):${anyResponse.transcriptMetrics.cer}%`)
+      }
+    }
+    lines.push('  - Timestamped Dialogue Segments:')
+    for (const seg of anyResponse.transcription.slice(0, 20)) {
+      const timeStr = `${Math.floor(seg.start / 60).toString().padStart(2, '0')}:${(seg.start % 60).toFixed(2).padStart(5, '0')}`
+      lines.push(`    [${timeStr}] ${seg.speaker || 'Speaker'}: "${seg.text}"${seg.confidence ? ` (Conf: ${seg.confidence}%)` : ''}`)
+    }
+    if (anyResponse.transcription.length > 20) {
+      lines.push(`    ... (${anyResponse.transcription.length - 20} additional dialogue segments omitted for brevity)`)
+    }
+    lines.push('')
+  }
+
   if (response.findings && response.findings.length > 0) {
     lines.push('FORENSIC FINDINGS:')
     for (const f of response.findings) {

@@ -10,14 +10,18 @@ import type {
   SpeechTranscriptionService,
   AudioForensicSegment,
   AudioForensicMetrics,
+  ForensicTranscriptSegment,
+  SpeakerProfile,
+  TranscriptForensicMetrics,
 } from './types'
 import { modelService } from './model-service'
+import { TruthLensWhisperService, runPythonTranscriptAnalyzer } from './transcript-analyzer'
 
 const execAsync = promisify(exec)
 
 // Pluggable Model Registries
 const registeredVoiceModels: Map<string, SyntheticVoiceModelInterface> = new Map()
-let registeredTranscriptionService: SpeechTranscriptionService | null = null
+let registeredTranscriptionService: SpeechTranscriptionService | null = new TruthLensWhisperService()
 
 export function registerSyntheticVoiceModel(model: SyntheticVoiceModelInterface) {
   registeredVoiceModels.set(model.name, model)
@@ -43,6 +47,8 @@ export async function analyzeAudioEvidence(
   suspiciousTimestamps: SuspiciousTimestamp[]
   visualizations: Array<{ label: string; url: string }>
   transcription?: Array<{ start: number; end: number; text: string; speaker?: string; confidence?: number }>
+  speakerMetrics?: { totalSpeakers: number; speakers: SpeakerProfile[] }
+  transcriptMetrics?: TranscriptForensicMetrics
   limitations: string[]
   processingErrors: string[]
   audioTimeline?: AudioForensicSegment[]
@@ -60,6 +66,8 @@ export async function analyzeAudioEvidence(
   const visualizations: Array<{ label: string; url: string }> = []
   const limitations: string[] = []
   const processingErrors: string[] = []
+  let speakerMetrics: { totalSpeakers: number; speakers: SpeakerProfile[] } | undefined
+  let transcriptMetrics: TranscriptForensicMetrics | undefined
 
   let transcription: Array<{ start: number; end: number; text: string; speaker?: string; confidence?: number }> | undefined
 
@@ -171,9 +179,44 @@ export async function analyzeAudioEvidence(
     processingErrors.push(`Audio preprocessing read error: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  // 2. Speech Transcription (Whisper Integration Check)
+  // 2. Speech Transcription & Deep Dialogue Forensic Analysis
   let whisperRun = false
-  if (registeredTranscriptionService) {
+  try {
+    const trnOutput = await runPythonTranscriptAnalyzer(audioPath, context)
+    if (trnOutput && trnOutput.status === 'completed') {
+      whisperRun = true
+      transcription = trnOutput.transcription
+      speakerMetrics = trnOutput.speakerMetrics
+      transcriptMetrics = trnOutput.transcriptMetrics
+
+      if (trnOutput.findings && trnOutput.findings.length > 0) {
+        indicators.push(...trnOutput.findings)
+      } else if (transcription && transcription.length > 0) {
+        indicators.push({
+          id: 'ind-aud-transcription-01',
+          category: 'transcript',
+          type: 'Speech-to-Text Alignment',
+          title: `Dialogue Transcribed (${transcription.length} segments, ${speakerMetrics?.totalSpeakers || 1} speakers)`,
+          description: `Extracted speech dialogue with word-level timestamps and acoustic speaker diarization using faster-whisper.`,
+          severity: 'info',
+          isHeuristic: false,
+          humanReviewRecommendation: 'Compare extracted dialogue timestamps against speaker acoustic energy profile.',
+        })
+      }
+
+      if (trnOutput.suspiciousTimestamps && trnOutput.suspiciousTimestamps.length > 0) {
+        suspiciousTimestamps.push(...trnOutput.suspiciousTimestamps)
+      }
+
+      if (trnOutput.limitations && trnOutput.limitations.length > 0) {
+        limitations.push(...trnOutput.limitations)
+      }
+    }
+  } catch (err) {
+    processingErrors.push(`Deep transcript analyzer error: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  if (!whisperRun && registeredTranscriptionService) {
     try {
       if (await registeredTranscriptionService.isAvailable()) {
         transcription = await registeredTranscriptionService.transcribe(audioPath)
@@ -186,7 +229,7 @@ export async function analyzeAudioEvidence(
           description: `Extracted speech transcription using ${registeredTranscriptionService.name}.`,
           severity: 'info',
           isHeuristic: false,
-          humanReviewRecommendation: 'Compare extracted dialogue timestamps against speaker visual lip movements.',
+          humanReviewRecommendation: 'Compare extracted dialogue timestamps against speaker acoustic waveform.',
         })
       }
     } catch (err) {
@@ -195,23 +238,17 @@ export async function analyzeAudioEvidence(
   }
 
   if (!whisperRun) {
-    // Check if Whisper CLI exists on system
-    try {
-      await execAsync('whisper --help')
-      // If Whisper CLI was available, we could run it here.
-    } catch {
-      limitations.push('Automated speech transcription (Whisper) is not installed in the local environment. Dialogue extraction interface is in standby.')
-      indicators.push({
-        id: `ind-aud-whisper-status-${runUid}`,
-        category: 'transcript',
-        type: 'Transcription Service Status',
-        title: 'Speech Transcription: Service Standby',
-        description: 'No local Whisper or cloud transcription endpoint was detected. TruthLens preserves integrity by not generating synthetic dialog.',
-        severity: 'info',
-        isHeuristic: true,
-        humanReviewRecommendation: 'Upload a reference transcript (.vtt/.srt) or connect the Whisper API service.',
-      })
-    }
+    limitations.push('Automated speech transcription (Whisper) is in standby mode. Dialogue extraction could not identify active speech segments.')
+    indicators.push({
+      id: `ind-aud-whisper-status-${runUid}`,
+      category: 'transcript',
+      type: 'Transcription Service Status',
+      title: 'Speech Transcription: Service Standby',
+      description: 'No active speech dialogue extracted from acoustic stream. TruthLens preserves integrity by not generating synthetic dialog.',
+      severity: 'info',
+      isHeuristic: true,
+      humanReviewRecommendation: 'Upload a reference transcript (.vtt/.srt) or connect external speech service.',
+    })
   }
 
   // 3. Acoustic Spectral & Neural Vocoder Detection
@@ -431,6 +468,8 @@ export async function analyzeAudioEvidence(
     suspiciousTimestamps,
     visualizations,
     transcription,
+    speakerMetrics,
+    transcriptMetrics,
     limitations,
     processingErrors,
     audioTimeline,

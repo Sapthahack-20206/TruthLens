@@ -94,6 +94,9 @@ export async function processAndAnalyzeMedia(
     let audioMetrics: import('./types').AudioForensicMetrics | undefined
     let audioDirectStatus: ForensicAnalysisOutput['uncertaintyStatus'] | undefined
     let audioDirectAssessment: string | undefined
+    let transcription: import('./types').ForensicTranscriptSegment[] | undefined
+    let speakerMetrics: { totalSpeakers: number; speakers: import('./types').SpeakerProfile[] } | undefined
+    let transcriptMetrics: import('./types').TranscriptForensicMetrics | undefined
 
     // 2. Run Modality Analysis
     if (detectedModality === 'video') {
@@ -107,6 +110,9 @@ export async function processAndAnalyzeMedia(
       allErrors.push(...videoRes.processingErrors)
       videoTimeline = videoRes.videoTimeline
       videoMetrics = videoRes.videoMetrics
+      if (videoRes.transcription) transcription = videoRes.transcription
+      if (videoRes.speakerMetrics) speakerMetrics = videoRes.speakerMetrics
+      if (videoRes.transcriptMetrics) transcriptMetrics = videoRes.transcriptMetrics
 
       // If an audio stream was extracted from the video, analyze it too (Tri-modal correlation!)
       if (videoRes.extractedAudioPath) {
@@ -139,6 +145,9 @@ export async function processAndAnalyzeMedia(
       if (audioRes.visualizations) {
         allVisualizations.push(...audioRes.visualizations)
       }
+      if (audioRes.transcription) transcription = audioRes.transcription as any
+      if (audioRes.speakerMetrics) speakerMetrics = audioRes.speakerMetrics
+      if (audioRes.transcriptMetrics) transcriptMetrics = audioRes.transcriptMetrics
       allLimitations.push(...audioRes.limitations)
       allErrors.push(...audioRes.processingErrors)
       audioTimeline = audioRes.audioTimeline
@@ -166,6 +175,7 @@ export async function processAndAnalyzeMedia(
       suspiciousTimestamps: allTimestamps,
       videoTimeline,
       audioTimeline,
+      transcription: transcription as any,
       suppliedContext: cleanContext,
       mediaMetadata: metadata,
     })
@@ -362,6 +372,9 @@ export async function processAndAnalyzeMedia(
       videoMetrics,
       audioTimeline,
       audioMetrics,
+      transcription,
+      speakerMetrics,
+      transcriptMetrics,
     }
 
     // Save to stores (guaranteed permanent persistence before returning response)

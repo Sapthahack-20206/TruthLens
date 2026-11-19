@@ -31,6 +31,7 @@ import {
   analyzeAudio,
   analyzeCrossModal,
   analyzeImage,
+  analyzeTranscript,
   analyzeVideo,
   getCurrentUser,
   getInvestigation,
@@ -55,6 +56,7 @@ const navItems = [
   { key: 'image-analysis', label: 'Image analysis' },
   { key: 'video-analysis', label: 'Video analysis' },
   { key: 'audio-analysis', label: 'Audio analysis' },
+  { key: 'transcript-analysis', label: 'Transcript analysis' },
   { key: 'reports', label: 'Reports' },
 ]
 
@@ -64,6 +66,7 @@ const sectionTitles: Record<string, { title: string; description: string }> = {
   'image-analysis': { title: 'Image analysis', description: 'Inspect image evidence and trace findings to their source.' },
   'video-analysis': { title: 'Video analysis', description: 'Review frames, timestamps, and temporal evidence in one place.' },
   'audio-analysis': { title: 'Audio analysis', description: 'Explore voice and sound evidence with timestamp-level context.' },
+  'transcript-analysis': { title: 'AI Transcript & Speech Authenticity Analysis', description: 'Analyze spoken dialogue, speaker diarization, lexical consistency, and audio manipulation.' },
   'cross-modal': { title: 'Cross-modal evidence', description: 'Bring video, audio, transcript, and context into a single review.' },
   reports: { title: 'Forensic reports', description: 'Retrieve and export evidence-linked investigation reports.' },
   settings: { title: 'Account settings', description: 'Manage your profile and workspace preferences.' },
@@ -73,6 +76,7 @@ const supportedTypes: Record<string, { label: string; accept: string; extensions
   'image-analysis': { label: 'Image', accept: 'image/png,image/jpeg,image/webp', extensions: 'PNG, JPG, JPEG, WEBP' },
   'video-analysis': { label: 'Video', accept: 'video/mp4,video/quicktime,video/webm', extensions: 'MP4, MOV, WEBM' },
   'audio-analysis': { label: 'Audio', accept: 'audio/wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac', extensions: 'WAV, MP3, M4A' },
+  'transcript-analysis': { label: 'Audio / Video', accept: 'audio/wav,audio/mpeg,audio/mp4,audio/x-m4a,video/mp4,video/quicktime,video/webm', extensions: 'WAV, MP3, MP4, MOV, WEBM' },
   'cross-modal': { label: 'Media', accept: 'image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,audio/wav,audio/mpeg,audio/mp4,audio/x-m4a,text/plain', extensions: 'Video (MP4, MOV, WEBM), Audio (MP3, WAV, M4A), Images (JPG, PNG, WEBP), Transcripts (TXT)' },
 }
 
@@ -114,7 +118,7 @@ function UploadWorkspace({ section }: { section: string }) {
   const config = supportedTypes[section] ?? supportedTypes['cross-modal']
   const sourcePreviewUrl = useMediaPreviewUrl(section === 'image-analysis' ? files[0] : undefined)
   const isCrossModal = section === 'cross-modal'
-  const Icon = section === 'image-analysis' ? FileImage : section === 'video-analysis' ? Video : section === 'audio-analysis' ? AudioLines : Fingerprint
+  const Icon = section === 'image-analysis' ? FileImage : section === 'video-analysis' ? Video : section === 'audio-analysis' ? AudioLines : section === 'transcript-analysis' ? FileText : Fingerprint
 
   const handleFilesChange = (newFiles: File[]) => {
     setFiles(newFiles)
@@ -153,7 +157,7 @@ function UploadWorkspace({ section }: { section: string }) {
         setFiles(bundleFiles)
         setContext(defaultContext)
       } else {
-        const presetKey = section === 'video-analysis' ? 'video' : section === 'audio-analysis' ? 'audio' : 'image'
+        const presetKey = section === 'video-analysis' ? 'video' : section === 'transcript-analysis' ? 'transcript' : section === 'audio-analysis' ? 'audio' : 'image'
         const file = await loadDemoSampleFile(presetKey)
         setFiles([file])
         setContext(DEMO_PRESETS[presetKey].context)
@@ -198,7 +202,9 @@ function UploadWorkspace({ section }: { section: string }) {
           ? await analyzeVideo(files[0], context, onProgress)
           : section === 'audio-analysis'
             ? await analyzeAudio(files[0], context, onProgress)
-            : await analyzeCrossModal(files, context, onProgress)
+            : section === 'transcript-analysis'
+              ? await analyzeTranscript(files[0], context, '', onProgress)
+              : await analyzeCrossModal(files, context, onProgress)
       setResponse(result)
       setProgress(100)
       setScanStage('Analysis complete.')
@@ -745,7 +751,7 @@ export default function WorkspaceShell() {
                 onRefresh={() => mutate('truthlens-investigations')}
               />
             )}
-            {['image-analysis', 'video-analysis', 'audio-analysis', 'cross-modal'].includes(page) && (
+            {['image-analysis', 'video-analysis', 'audio-analysis', 'transcript-analysis', 'cross-modal'].includes(page) && (
               <UploadWorkspace section={page} />
             )}
             {page === 'reports' && <Reports key={reportQuery} initialId={reportQuery} />}

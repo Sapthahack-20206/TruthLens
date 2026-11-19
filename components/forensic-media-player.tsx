@@ -151,6 +151,25 @@ export default function ForensicMediaPlayer({
   const [isListeningSpeech, setIsListeningSpeech] = useState<boolean>(false)
   const [speechApiSupported, setSpeechApiSupported] = useState<boolean>(false)
 
+  // Synchronize transcript from forensicOutput or initialTranscript prop
+  useEffect(() => {
+    if (forensicOutput?.transcription && forensicOutput.transcription.length > 0) {
+      const mapped: TranscriptLine[] = forensicOutput.transcription.map((s, idx) => ({
+        id: s.id || `seg-${idx + 1}`,
+        startTime: s.start,
+        endTime: s.end,
+        speaker: s.speaker || 'Speaker 1',
+        confidence: s.confidence,
+        text: s.text,
+      }))
+      setTranscript(mapped)
+      setTranscriptSource('backend')
+    } else if (initialTranscript && initialTranscript.length > 0) {
+      setTranscript(initialTranscript)
+      setTranscriptSource('backend')
+    }
+  }, [forensicOutput?.transcription, initialTranscript])
+
   // Scanning Visualization State
   const [isScanning, setIsScanning] = useState<boolean>(false)
   const [scanProgress, setScanProgress] = useState<number>(0)

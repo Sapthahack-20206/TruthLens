@@ -66,6 +66,23 @@ export const DEMO_PRESETS: Record<string, DemoSamplePreset> = {
     ],
     recommendedSection: 'image-analysis',
   },
+  transcript: {
+    id: 'demo-transcript-benchmark',
+    title: 'Dialogue Authenticity Benchmark',
+    subtitle: 'Synchronized audio dialogue with speaker verification and reference transcript',
+    modality: 'audio',
+    filename: 'forensic_audio_sample.wav',
+    path: '/samples/forensic_audio_sample.wav',
+    mimeType: 'audio/wav',
+    context: 'Hello and welcome to TruthLens forensic investigation. In this session, we are analyzing synthetic biometric facial signals and acoustic waveform cues.',
+    keyFindings: [
+      'Speech transcription alignment with word-level timestamps',
+      'Speaker diarization attribution (Speaker 1, Speaker 2)',
+      'Lexical Word Error Rate (WER) and Character Error Rate (CER) verification',
+      'Dialogue repetition and acoustic boundary splice checks',
+    ],
+    recommendedSection: 'audio-analysis',
+  },
   'cross-modal': {
     id: 'demo-multimodal-case',
     title: 'Tri-Modal Multi-Stream Case Bundle',
@@ -87,7 +104,7 @@ export const DEMO_PRESETS: Record<string, DemoSamplePreset> = {
 /**
  * Loads a real demonstration file from the public samples repository as a browser File object.
  */
-export async function loadDemoSampleFile(presetId: 'video' | 'audio' | 'image'): Promise<File> {
+export async function loadDemoSampleFile(presetId: 'video' | 'audio' | 'image' | 'transcript'): Promise<File> {
   const preset = DEMO_PRESETS[presetId]
   if (!preset) throw new Error(`Unknown preset: ${presetId}`)
 

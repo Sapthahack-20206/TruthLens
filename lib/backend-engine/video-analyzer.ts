@@ -9,6 +9,9 @@ import type {
   VideoForensicFrame,
   VideoForensicMetrics,
   DeepfakeModelInterface,
+  ForensicTranscriptSegment,
+  SpeakerProfile,
+  TranscriptForensicMetrics,
 } from './types'
 import {
   getFfmpegPath,
@@ -18,6 +21,7 @@ import {
   cleanupTempFiles,
 } from './media-processor'
 import { modelService } from './model-service'
+import { runPythonTranscriptAnalyzer } from './transcript-analyzer'
 
 // Pluggable Registry for Neural Deepfake Detection Models
 const registeredModels: Map<string, DeepfakeModelInterface> = new Map()
@@ -130,6 +134,9 @@ export async function analyzeVideoEvidence(
   processingErrors: string[]
   videoTimeline?: VideoForensicFrame[]
   videoMetrics?: VideoForensicMetrics
+  transcription?: ForensicTranscriptSegment[]
+  speakerMetrics?: { totalSpeakers: number; speakers: SpeakerProfile[] }
+  transcriptMetrics?: TranscriptForensicMetrics
 }> {
   const indicators: DetectionIndicator[] = []
   const suspiciousTimestamps: SuspiciousTimestamp[] = []
@@ -138,6 +145,9 @@ export async function analyzeVideoEvidence(
   const processingErrors: string[] = []
   let videoTimeline: VideoForensicFrame[] | undefined
   let videoMetrics: VideoForensicMetrics | undefined
+  let transcription: ForensicTranscriptSegment[] | undefined
+  let speakerMetrics: { totalSpeakers: number; speakers: SpeakerProfile[] } | undefined
+  let transcriptMetrics: TranscriptForensicMetrics | undefined
 
   const tempJobId = path.basename(videoPath, path.extname(videoPath))
   const ffmpegPath = getFfmpegPath()
@@ -473,6 +483,55 @@ export async function analyzeVideoEvidence(
     })
   }
 
+  // 7. Video Audio Track Transcription & Facial Alignment
+  if (probe.hasAudio !== false) {
+    try {
+      const trnRes = await runPythonTranscriptAnalyzer(videoPath, context)
+      if (trnRes && trnRes.status === 'completed') {
+        transcription = trnRes.transcription
+        speakerMetrics = trnRes.speakerMetrics
+        transcriptMetrics = trnRes.transcriptMetrics
+
+        if (transcription && transcription.length > 0) {
+          indicators.push({
+            id: 'ind-vid-transcript-01',
+            category: 'transcript',
+            type: 'Video Dialogue Extracted',
+            title: `Spoken Dialogue Transcribed (${transcription.length} segments, ${speakerMetrics?.totalSpeakers || 1} speakers)`,
+            description: `Extracted spoken dialogue from video audio track with word-level timestamps and speaker diarization.`,
+            severity: 'info',
+            isHeuristic: false,
+            humanReviewRecommendation: 'Correlate extracted dialogue timestamps with on-screen speaker face visibility.',
+          })
+
+          // Correlate with video keyframes: check if on-screen face coincides with speech segment
+          if (videoTimeline && videoTimeline.length > 0) {
+            for (const seg of transcription) {
+              const matchedFrame = videoTimeline.find((f) => f.seconds >= seg.start && f.seconds <= seg.end && f.faceDetected)
+              if (matchedFrame) {
+                matchedFrame.indicators.push(`Active Speech (${seg.speaker || 'Speaker'}): "${seg.text.slice(0, 30)}..."`)
+              }
+            }
+          }
+        }
+
+        if (trnRes.findings && trnRes.findings.length > 0) {
+          indicators.push(...trnRes.findings)
+        }
+        if (trnRes.suspiciousTimestamps && trnRes.suspiciousTimestamps.length > 0) {
+          suspiciousTimestamps.push(...trnRes.suspiciousTimestamps)
+        }
+        if (trnRes.limitations && trnRes.limitations.length > 0) {
+          for (const lim of trnRes.limitations) {
+            if (!limitations.includes(lim)) limitations.push(lim)
+          }
+        }
+      }
+    } catch (err) {
+      processingErrors.push(`Video transcript extraction error: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   return {
     indicators,
     suspiciousTimestamps,
@@ -482,5 +541,8 @@ export async function analyzeVideoEvidence(
     processingErrors,
     videoTimeline,
     videoMetrics,
+    transcription,
+    speakerMetrics,
+    transcriptMetrics,
   }
 }

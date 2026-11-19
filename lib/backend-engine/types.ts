@@ -166,6 +166,50 @@ export interface ForensicAnalysisOutput {
   videoMetrics?: VideoForensicMetrics
   audioTimeline?: AudioForensicSegment[]
   audioMetrics?: AudioForensicMetrics
+  transcription?: ForensicTranscriptSegment[]
+  speakerMetrics?: {
+    totalSpeakers: number
+    speakers: SpeakerProfile[]
+  }
+  transcriptMetrics?: TranscriptForensicMetrics
+}
+
+export interface TranscriptWord {
+  word: string
+  start: number
+  end: number
+  probability: number
+}
+
+export interface ForensicTranscriptSegment {
+  id: string
+  start: number
+  end: number
+  text: string
+  speaker?: string
+  confidence?: number
+  noSpeechProb?: number
+  words?: TranscriptWord[]
+  anomalies?: string[]
+}
+
+export interface SpeakerProfile {
+  id: string
+  label: string
+  segmentCount: number
+  totalSpokenSeconds: number
+  avgPitchHz?: number
+}
+
+export interface TranscriptForensicMetrics {
+  totalWords: number
+  spokenDurationSec: number
+  speechRatio: number
+  wer?: number | null
+  cer?: number | null
+  repetitionCount: number
+  spliceCount: number
+  silenceAnomalyCount: number
 }
 
 // Model Interface specifications for external deepfake / synthetic models

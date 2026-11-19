@@ -19,4 +19,9 @@ This directory stores neural deepfake and face detection ONNX models utilized by
    - Source: [HuggingFace - SpeechAntiSpoofingBenchmarks/AASIST](https://huggingface.co/SpeechAntiSpoofingBenchmarks/AASIST)
    - Function: Classifies raw 16kHz speech waveforms for voice spoofing, synthetic speech (TTS), and cloned voice detection.
 
-*Note: Model binaries (`*.onnx`) are excluded from Git tracking via `.gitignore`.*
+4. **`whisper-tiny`** (Faster-Whisper int8 CTranslate2 Model)
+   - Architecture: OpenAI Whisper Tiny (Multilingual)
+   - Source: [Systran/faster-whisper-tiny](https://huggingface.co/Systran/faster-whisper-tiny)
+   - Function: High-speed speech-to-text transcription, word-level timestamps, and dialogue forensic analysis.
+
+*Note: Model binaries (`*.onnx`, `*.bin`) are excluded from Git tracking via `.gitignore`.*

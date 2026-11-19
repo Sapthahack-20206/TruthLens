@@ -25,6 +25,10 @@ export interface ForensicReportData {
   audioFindings: Array<{ title: string; timestamp?: string; severity: string; confidence?: number | string; explanation: string; humanReview?: string }>
   transcriptFindings: Array<{ title: string; timestamp?: string; severity: string; confidence?: number | string; explanation: string; humanReview?: string }>
   imageFindings?: Array<{ title: string; timestamp?: string; severity: string; confidence?: number | string; explanation: string; humanReview?: string }>
+  transcriptDialogue?: Array<{ timestamp: string; speaker?: string; text: string; confidence?: number }>
+  speakerSummary?: Array<{ label: string; segments: number; duration: string }>
+  werScore?: number | null
+  cerScore?: number | null
   correlations: Array<{ source: string; target: string; relationship: string; explanation?: string; inconsistencyType?: string }>
   limitations: string[]
   humanReviewRecommendations: string[]
@@ -234,6 +238,44 @@ export function generateForensicPdfBlob(data: ForensicReportData): Blob {
     if (data.imageFindings && data.imageFindings.length > 0) {
       printFindingsCategory('Image Forensic Analysis', data.imageFindings)
     }
+  }
+
+  // --- SPOKEN DIALOGUE TRANSCRIPT & SPEAKER BREAKDOWN ---
+  if (data.transcriptDialogue && data.transcriptDialogue.length > 0) {
+    checkSpace(50)
+    currentCommands.push(
+      `BT /F1 11 Tf 0.1 0.15 0.2 rg 50 ${currentY} Td (Spoken Dialogue Transcript & Speaker Attribution) Tj ET`,
+      `0.8 0.8 0.8 RG 0.5 w 50 ${currentY - 4} 545 ${currentY - 4} l S`
+    )
+    currentY -= 16
+
+    if (data.speakerSummary && data.speakerSummary.length > 0) {
+      checkSpace(18)
+      const spkText = data.speakerSummary.map((s) => `${s.label}: ${s.segments} turns (${s.duration})`).join('  |  ')
+      currentCommands.push(`BT /F1 8 Tf 0.2 0.3 0.4 rg 50 ${currentY} Td (Diarization: ${escapePdfText(spkText)}) Tj ET`)
+      currentY -= 14
+    }
+
+    if (data.werScore !== null && data.werScore !== undefined) {
+      checkSpace(18)
+      currentCommands.push(`BT /F1 8 Tf 0.2 0.3 0.4 rg 50 ${currentY} Td (Lexical Verification: WER: ${data.werScore}%  |  CER: ${data.cerScore ?? 0}%) Tj ET`)
+      currentY -= 14
+    }
+
+    for (const d of data.transcriptDialogue.slice(0, 8)) {
+      checkSpace(24)
+      const lineStr = `[${d.timestamp}] ${d.speaker || 'Speaker'}: "${d.text}"${d.confidence ? ` (Conf: ${d.confidence}%)` : ''}`
+      for (const wrapped of wrapText(lineStr, 80)) {
+        currentCommands.push(`BT /F1 7.5 Tf 0.2 0.2 0.2 rg 55 ${currentY} Td (${escapePdfText(wrapped)}) Tj ET`)
+        currentY -= 11
+      }
+    }
+    if (data.transcriptDialogue.length > 8) {
+      checkSpace(16)
+      currentCommands.push(`BT /F1 7 Tf 0.5 0.5 0.5 rg 55 ${currentY} Td (... ${data.transcriptDialogue.length - 8} additional dialogue segments available in digital record) Tj ET`)
+      currentY -= 14
+    }
+    currentY -= 8
   }
 
   // --- CROSS-MODAL CORRELATION ---

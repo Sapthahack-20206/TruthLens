@@ -156,6 +156,37 @@ export type ForensicResponse = {
     suspiciousSegmentCount: number
     modelName: string
   }
+  transcription?: {
+    id: string
+    start: number
+    end: number
+    text: string
+    speaker?: string
+    confidence?: number
+    noSpeechProb?: number
+    words?: { word: string; start: number; end: number; probability: number }[]
+    anomalies?: string[]
+  }[]
+  speakerMetrics?: {
+    totalSpeakers: number
+    speakers: {
+      id: string
+      label: string
+      segmentCount: number
+      totalSpokenSeconds: number
+      avgPitchHz?: number
+    }[]
+  }
+  transcriptMetrics?: {
+    totalWords: number
+    spokenDurationSec: number
+    speechRatio: number
+    wer?: number | null
+    cer?: number | null
+    repetitionCount: number
+    spliceCount: number
+    silenceAnomalyCount: number
+  }
 }
 
 function formatApiError(detail: string, contentType: string | null, fallback: string) {
@@ -357,6 +388,19 @@ export async function analyzeAudio(file: File, context = '', onProgress?: (perce
   const body = new FormData()
   body.append('file', file)
   return upload<ForensicResponse>('/api/analyze/audio', appendContext(body, context), onProgress)
+}
+
+export async function analyzeTranscript(
+  file: File,
+  referenceText = '',
+  context = '',
+  onProgress?: (percentage: number) => void
+): Promise<ForensicResponse> {
+  const body = new FormData()
+  body.append('file', file)
+  if (referenceText) body.append('referenceText', referenceText)
+  if (context) body.append('context', context)
+  return upload<ForensicResponse>('/api/analyze/transcript', body, onProgress)
 }
 
 export function analyzeCrossModal(files: File[], context = '', onProgress?: (percentage: number) => void) {

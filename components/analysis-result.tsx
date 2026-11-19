@@ -36,6 +36,7 @@ import { getSafeVisualizationUrl, type ForensicFinding, type ForensicResponse } 
 import EvidenceGraph, { type EvidenceRelationship } from '@/components/evidence-graph'
 import MultimodalCorrelationPanel from '@/components/multimodal-correlation-panel'
 import ExplainableEvidenceViewer from '@/components/explainable-evidence-viewer'
+import TranscriptForensicExplorer from '@/components/transcript-forensic-explorer'
 import type { CorrelationInput } from '@/lib/multimodal-correlation-engine'
 import { generateForensicPdfBlob, type ForensicReportData } from '@/components/forensic-pdf-generator'
 
@@ -387,6 +388,19 @@ export default function AnalysisResult({
         explanation: f.description ?? 'Visual artifact observed.',
         humanReview: f.humanReview,
       })),
+      transcriptDialogue: result?.transcription?.map((s) => ({
+        timestamp: `${Math.floor(s.start / 60).toString().padStart(2, '0')}:${(s.start % 60).toFixed(2).padStart(5, '0')}`,
+        speaker: s.speaker,
+        text: s.text,
+        confidence: s.confidence,
+      })),
+      speakerSummary: result?.speakerMetrics?.speakers?.map((spk) => ({
+        label: spk.label,
+        segments: spk.segmentCount,
+        duration: `${spk.totalSpokenSeconds}s`,
+      })),
+      werScore: result?.transcriptMetrics?.wer ?? null,
+      cerScore: result?.transcriptMetrics?.cer ?? null,
       correlations: relationships.map((r) => ({
         source: r.source,
         target: r.target,
@@ -1147,6 +1161,18 @@ export default function AnalysisResult({
             </div>
           )}
         </div>
+      )}
+
+      {/* TRANSCRIPT & SPEECH AUTHENTICITY SUITE */}
+      {(Boolean(result?.transcription && result.transcription.length > 0) ||
+        transcriptFindings.length > 0 ||
+        selectedModality === 'transcript' ||
+        section.toLowerCase().includes('audio') ||
+        section.toLowerCase().includes('transcript')) && (
+        <TranscriptForensicExplorer
+          forensicOutput={result}
+          onSeekToTimestamp={handleNavigateTimestamp}
+        />
       )}
 
       {/* 2. EVIDENCE CORRELATION INTERFACE */}

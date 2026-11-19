@@ -448,6 +448,14 @@ export default function UserDashboard({
                 </div>
               </Link>
 
+              <Link href="/workspace?section=transcript-analysis" className="launchpad-item">
+                <FileText className="h-4 w-4 text-emerald-400" />
+                <div>
+                  <strong>Transcript Analysis</strong>
+                  <small>ASR &amp; dialogue authenticity</small>
+                </div>
+              </Link>
+
               <Link href="/workspace?section=cross-modal" className="launchpad-item">
                 <ShieldCheck className="h-4 w-4 text-emerald-400" />
                 <div>

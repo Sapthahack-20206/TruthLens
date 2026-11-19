@@ -33,6 +33,8 @@ AGENTS.md
 
 # Large model binaries and forensic outputs
 /models/*.onnx
+/models/**/*.bin
+/models/*.bin
 /public/forensic-output/
 /data/
 
