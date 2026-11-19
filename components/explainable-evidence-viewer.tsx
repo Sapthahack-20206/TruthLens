@@ -48,10 +48,17 @@ export interface EnrichedFindingItem {
 export interface SuspiciousTimestampItem {
   timestamp: string
   seconds?: number
+  frameNumber?: number
   label?: string
   description?: string
   evidenceRef?: string
   severity?: string
+  anomalyType?: string
+  metricValue?: string
+  isHeuristic?: boolean
+  faceDetected?: boolean
+  previewThumbnail?: string
+  frameThumbnailUrl?: string
 }
 
 export interface SuspiciousRegionItem {
@@ -298,8 +305,21 @@ export default function ExplainableEvidenceViewer({
             {timestamps.map((ts, idx) => {
               const secondsVal = ts.seconds !== undefined ? ts.seconds : parseTimeToSeconds(ts.timestamp)
               const isVideo = ts.evidenceRef?.toLowerCase().includes('frame') || mediaType.toLowerCase().includes('video')
+              const thumbUrl = ts.previewThumbnail || ts.frameThumbnailUrl
               return (
                 <div key={`ts-${idx}`} className="timestamp-inspect-card">
+                  {thumbUrl && (
+                    <div
+                      className="w-full aspect-video rounded overflow-hidden bg-slate-950 mb-2 cursor-pointer border border-slate-800 hover:border-cyan-500 transition-colors relative"
+                      onClick={() => setActiveModalImage({ url: thumbUrl, label: `${ts.timestamp} ${ts.frameNumber ? `(#F${ts.frameNumber})` : ''} - ${ts.label || 'Suspicious Frame Inspection'}` })}
+                      title="Click to enlarge suspicious frame inspection"
+                    >
+                      <img src={thumbUrl} alt={ts.label || 'Frame preview'} className="w-full h-full object-cover" />
+                      <div className="absolute bottom-1 right-1 bg-black/70 px-1 py-0.5 rounded text-[9px] text-cyan-300 font-mono">
+                        Inspect
+                      </div>
+                    </div>
+                  )}
                   <div className="timestamp-card-top">
                     <button
                       type="button"
@@ -309,6 +329,7 @@ export default function ExplainableEvidenceViewer({
                     >
                       <Play className="h-3 w-3 fill-current" />
                       <span>{ts.timestamp}</span>
+                      {ts.frameNumber && <span className="text-[10px] text-cyan-400 font-mono">#F{ts.frameNumber}</span>}
                     </button>
                     {ts.severity && (
                       <span className={`severity-tag-micro severity-${ts.severity.toLowerCase()}`}>

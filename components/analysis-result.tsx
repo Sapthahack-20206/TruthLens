@@ -9,15 +9,18 @@ import {
   ArrowRight,
   AudioLines,
   CheckCircle2,
+  Clock,
   Clock3,
   Download,
   Eye,
   FileCheck,
   FileSearch,
   FileText,
+  Film,
   Fingerprint,
   Info,
   Layers,
+  Play,
   Printer,
   ScanFace,
   ShieldAlert,
@@ -81,6 +84,24 @@ function deriveHumanReview(findingTitle: string, evidenceType: string): string {
     default:
       return 'Conduct manual cross-modal triangulation with independent primary sources.'
   }
+}
+
+function parseTimeToSeconds(timeStr?: string): number {
+  if (!timeStr) return 0
+  const parts = timeStr.trim().split(':')
+  if (parts.length === 2) {
+    const mins = parseFloat(parts[0]) || 0
+    const secs = parseFloat(parts[1]) || 0
+    return mins * 60 + secs
+  }
+  if (parts.length === 3) {
+    const hrs = parseFloat(parts[0]) || 0
+    const mins = parseFloat(parts[1]) || 0
+    const secs = parseFloat(parts[2]) || 0
+    return hrs * 3600 + mins * 60 + secs
+  }
+  const numeric = parseFloat(timeStr)
+  return Number.isNaN(numeric) ? 0 : numeric
 }
 
 export default function AnalysisResult({
@@ -486,6 +507,151 @@ export default function AnalysisResult({
         <div className="result-empty">
           <Info aria-hidden="true" />
           <p>The analysis service responded, but did not return any renderable findings. No detection or confidence value has been inferred.</p>
+        </div>
+      )}
+
+      {/* VIDEO FORENSIC TIMELINE & FRAME PREVIEW SUITE (Requirements 1-9) */}
+      {(videoTimeline.length > 0 || (timestamps.length > 0 && (section.toLowerCase().includes('video') || videoFindings.length > 0))) && (
+        <div className="forensic-video-timeline-card" aria-label="Video Forensic Keyframe Timeline">
+          <div className="video-timeline-header">
+            <div className="video-timeline-title-group">
+              <Film className="h-4 w-4 text-cyan-400" />
+              <div>
+                <h4 className="video-timeline-title">Video Forensic Keyframe Timeline &amp; Suspicious Frame Explorer</h4>
+                <p className="video-timeline-desc">
+                  Frame-level temporal consistency, OpenCV YuNet facial tracking, and boundary anomaly extraction.
+                </p>
+              </div>
+            </div>
+            <div className="video-timeline-badges">
+              {result?.videoMetrics && (
+                <>
+                  <span className="video-status-pill ready">
+                    {result.videoMetrics.totalFramesSampled} Frames Sampled
+                  </span>
+                  <span className="video-status-pill">
+                    {result.videoMetrics.facesDetectedCount} Faces Tracked
+                  </span>
+                </>
+              )}
+              <span className={`video-status-pill ${timestamps.length > 0 ? 'scanning' : 'ready'}`}>
+                {timestamps.length} Anomalous Frames Flagged
+              </span>
+              <span className="heuristic-badge">Heuristic Finding</span>
+            </div>
+          </div>
+
+          {/* Quick Anomaly Jump Pills Strip */}
+          {timestamps.length > 0 && (
+            <div className="video-anomaly-strip">
+              <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5 mr-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-400" /> Suspicious Sections:
+              </span>
+              {timestamps.map((ts, idx) => (
+                <button
+                  key={`ts-pill-${idx}`}
+                  type="button"
+                  className={`video-anomaly-pill ${ts.severity || 'moderate'}`}
+                  onClick={() => {
+                    const sec = typeof ts.seconds === 'number' ? ts.seconds : parseTimeToSeconds(ts.timestamp)
+                    handleNavigateTimestamp(sec)
+                    if (ts.previewThumbnail) {
+                      setSelectedPreviewFrame(ts)
+                    }
+                  }}
+                  title={`Jump video to ${ts.timestamp}: ${ts.label || ts.description}`}
+                >
+                  <Play className="h-2.5 w-2.5 fill-current text-cyan-400" />
+                  <span className="font-mono">{ts.timestamp}</span>
+                  {ts.frameNumber && <span className="text-[9px] text-slate-400">#F{ts.frameNumber}</span>}
+                  <span>{ts.label || 'Flagged'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Horizontal Scrollable Frame Timeline Strip */}
+          {videoTimeline.length > 0 ? (
+            <div className="video-timeline-strip" role="region" aria-label="Keyframe timeline strip">
+              {videoTimeline.map((frame) => {
+                const isSelected = selectedPreviewFrame?.frameNumber === frame.frameNumber
+                return (
+                  <div
+                    key={`frame-node-${frame.frameNumber}`}
+                    className={`video-frame-card-node ${frame.isSuspicious ? 'is-suspicious' : ''} ${frame.severity || ''} ${isSelected ? 'is-active' : ''}`}
+                    onClick={() => {
+                      handleNavigateTimestamp(frame.seconds)
+                      setSelectedPreviewFrame(frame)
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    title={`Frame #${frame.frameNumber} (${frame.timestamp}): Click to seek video & preview frame`}
+                  >
+                    <div className="video-frame-thumb-box">
+                      {frame.previewThumbnail ? (
+                        <img
+                          src={frame.previewThumbnail}
+                          alt={`Frame #${frame.frameNumber}`}
+                          className="video-frame-thumb"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950 text-slate-600 text-[10px]">
+                          <Film className="h-4 w-4 mb-0.5 opacity-50" />
+                          <span>#{frame.frameNumber}</span>
+                        </div>
+                      )}
+                      {frame.isSuspicious && (
+                        <span className={`video-frame-alert-dot ${frame.severity === 'critical' ? 'critical' : ''}`} />
+                      )}
+                      {frame.faceDetected && (
+                        <span className="video-frame-face-badge" title="Human face tracked via OpenCV YuNet">
+                          <ScanFace className="h-2.5 w-2.5" /> Face
+                        </span>
+                      )}
+                    </div>
+                    <div className="video-frame-meta">
+                      <span className="video-frame-time">{frame.timestamp}</span>
+                      <span className="video-frame-num">#{frame.frameNumber}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="text-xs text-slate-400 py-3 px-2 flex items-center gap-2">
+              <Clock className="h-4 w-4 text-cyan-400" />
+              <span>Keyframe timeline was sampled at 1.0 fps interval. Click any flagged section above to inspect.</span>
+            </div>
+          )}
+
+          {/* Metric Telemetry Row if available */}
+          {result?.videoMetrics && (
+            <div className="video-telemetry-grid mt-1 pt-2 border-t border-slate-800/60">
+              <div className="text-[10px] text-slate-400">
+                <span className="text-slate-500 block">Total Sampled:</span>
+                <strong className="text-slate-200 font-mono">{result.videoMetrics.totalFramesSampled} frames</strong>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                <span className="text-slate-500 block">Faces Detected:</span>
+                <strong className="text-cyan-400 font-mono">{result.videoMetrics.facesDetectedCount} frames</strong>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                <span className="text-slate-500 block">Suspicious Keyframes:</span>
+                <strong className={`${timestamps.length > 0 ? 'text-amber-400' : 'text-emerald-400'} font-mono`}>
+                  {timestamps.length} flagged
+                </strong>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                <span className="text-slate-500 block">Avg Inter-frame Diff:</span>
+                <strong className="text-slate-200 font-mono">{result.videoMetrics.averageInterframeDiff}</strong>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                <span className="text-slate-500 block">Compression Variance:</span>
+                <strong className="text-slate-200 font-mono">{result.videoMetrics.compressionVariance}</strong>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

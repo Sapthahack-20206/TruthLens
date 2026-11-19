@@ -278,7 +278,7 @@ export default function MediaPreview({
       {/* Interactive Media Preview Canvas */}
       <div className="evidence-visual-canvas">
         {category === 'image' && <ImageEvidenceViewer file={currentFile} />}
-        {category === 'video' && <VideoEvidencePlayer file={currentFile} />}
+        {category === 'video' && <VideoEvidencePlayer file={currentFile} response={response} />}
         {category === 'audio' && <AudioEvidencePlayer file={currentFile} />}
         {category === 'text' && (
           <TextEvidenceViewer file={currentFile} onSyncContext={onSyncContext} />
@@ -409,7 +409,7 @@ function ImageEvidenceViewer({ file }: { file: File }) {
 /*                                VIDEO PLAYER                                */
 /* -------------------------------------------------------------------------- */
 
-function VideoEvidencePlayer({ file }: { file: File }) {
+function VideoEvidencePlayer({ file, response }: { file: File; response?: unknown }) {
   const url = useMediaPreviewUrl(file)
   const videoRef = useRef<HTMLVideoElement>(null)
 
@@ -421,6 +421,14 @@ function VideoEvidencePlayer({ file }: { file: File }) {
   const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(
     null
   )
+
+  const suspiciousTimestamps = useMemo(() => {
+    if (response && typeof response === 'object' && 'suspiciousTimestamps' in response) {
+      const arr = (response as any).suspiciousTimestamps
+      return Array.isArray(arr) ? arr : []
+    }
+    return []
+  }, [response])
 
   useEffect(() => {
     setIsPlaying(false)
@@ -513,7 +521,25 @@ function VideoEvidencePlayer({ file }: { file: File }) {
       {/* Forensic Video Control Bar */}
       <div className="video-controls-bar">
         {/* Timeline Scrubber */}
-        <div className="video-scrubber-row">
+        <div className="video-scrubber-row relative">
+          {duration > 0 && suspiciousTimestamps.length > 0 && (
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 pointer-events-none flex items-center z-10 px-1">
+              {suspiciousTimestamps.map((ts: any, idx: number) => {
+                const sec = typeof ts.seconds === 'number' ? ts.seconds : 0
+                const leftPct = Math.min(100, Math.max(0, (sec / duration) * 100))
+                return (
+                  <span
+                    key={`preview-marker-${idx}`}
+                    className={`absolute w-1.5 h-3 rounded-full -translate-x-1/2 shadow-sm ${
+                      ts.severity === 'critical' ? 'bg-red-500' : ts.severity === 'high' ? 'bg-orange-500' : 'bg-amber-400'
+                    }`}
+                    style={{ left: `${leftPct}%` }}
+                    title={`${ts.timestamp}: ${ts.label || 'Suspicious section'}`}
+                  />
+                )
+              })}
+            </div>
+          )}
           <input
             type="range"
             min={0}
@@ -595,6 +621,33 @@ function VideoEvidencePlayer({ file }: { file: File }) {
             </button>
           </div>
         </div>
+
+        {/* Suspicious Anomaly Quick Jump Pills */}
+        {suspiciousTimestamps.length > 0 && (
+          <div className="video-anomalies-quick-strip" style={{ display: 'flex', gap: '6px', overflowX: 'auto', padding: '6px 10px', alignItems: 'center', background: '#090d16', borderRadius: '6px', marginTop: '6px' }}>
+            <span style={{ fontSize: '10px', color: '#f59e0b', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+              Flagged Timestamps:
+            </span>
+            {suspiciousTimestamps.map((ts: any, idx: number) => (
+              <button
+                key={idx}
+                type="button"
+                className="step-btn"
+                style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', cursor: 'pointer', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                onClick={() => {
+                  const sec = typeof ts.seconds === 'number' ? ts.seconds : 0
+                  if (videoRef.current) {
+                    videoRef.current.currentTime = sec
+                    setCurrentTime(sec)
+                  }
+                }}
+                title={ts.description || ts.label}
+              >
+                <span>▶</span> {ts.timestamp} {ts.frameNumber ? `#F${ts.frameNumber}` : ''}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Video metadata */}
