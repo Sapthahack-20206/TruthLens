@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { processAndAnalyzeMedia } from '@/lib/backend-engine/analyzer-service'
-import type { ForensicAnalysisOutput } from '@/lib/backend-engine/types'
 import { investigationStore } from '@/lib/backend-engine/investigation-store'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { sanitizeContextString, sanitizeFilename } from '@/lib/backend-engine/security-utils'
@@ -9,6 +8,7 @@ import { validateAndSaveMediaFile } from '@/lib/backend-engine/media-processor'
 import { analyzeAudioEvidence } from '@/lib/backend-engine/audio-analyzer'
 import { analyzeImageEvidence } from '@/lib/backend-engine/image-analyzer'
 import { executeMultimodalCorrelation } from '@/lib/multimodal-correlation-engine'
+import { authService } from '@/lib/backend-engine/auth-service'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -18,6 +18,8 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
+    const { effectiveUserId } = authService.getAuthContext(req)
+
     const contentType = req.headers.get('content-type') || ''
     if (!contentType.includes('multipart/form-data')) {
       return NextResponse.json(
@@ -40,6 +42,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Limit maximum bundle files to 5 to prevent resource exhaustion
     if (allFiles.length > 5) {
       return NextResponse.json(
         { detail: 'Cross-modal bundle exceeds maximum limit of 5 files per submission.' },
@@ -90,7 +93,7 @@ export async function POST(req: NextRequest) {
 
     const primaryFile = candidates[0]
     const primarySafeName = sanitizeFilename(primaryFile.name)
-    const primaryResult = await processAndAnalyzeMedia(primaryFile, primarySafeName, context)
+    const primaryResult = await processAndAnalyzeMedia(primaryFile, primarySafeName, context, undefined, effectiveUserId)
 
     // Process additional secondary media files in the bundle
     if (candidates.length > 1) {
@@ -187,10 +190,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    investigationStore.saveOutput(primaryResult)
+    investigationStore.saveOutput(primaryResult, effectiveUserId)
 
     return NextResponse.json(primaryResult, { status: 200 })
   } catch (err) {
-    return createSafeErrorResponse(err, 'Cross-modal analysis could not be completed.', 500)
+    return createSafeErrorResponse(err, 'Cross-modal multimodal analysis failed.', 500)
   }
 }

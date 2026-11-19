@@ -1,51 +1,53 @@
 'use client'
 
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useMemo, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import {
-  Activity,
   AlertCircle,
-  AlertTriangle,
-  ArrowDown,
   ArrowRight,
   AudioLines,
   Bell,
-  Check,
-  CheckCircle2,
   ChevronDown,
-  CircleHelp,
-  Clock3,
-  FileCheck,
+  Download,
   FileImage,
   FileSearch,
   FileText,
   Fingerprint,
-  Image as ImageIcon,
   LoaderCircle,
+  LogOut,
   Menu,
   Plus,
-  RefreshCw,
-  RotateCcw,
-  Search,
   ShieldCheck,
-  Sparkles,
-  Upload,
   UserRound,
   Video,
   X,
 } from 'lucide-react'
-import { analyzeAudio, analyzeCrossModal, analyzeImage, analyzeVideo, getInvestigation, getReport, listInvestigations, type InvestigationRecord } from '@/lib/truthlens-api'
+import {
+  analyzeAudio,
+  analyzeCrossModal,
+  analyzeImage,
+  analyzeVideo,
+  getCurrentUser,
+  getInvestigation,
+  getReport,
+  listInvestigations,
+  logoutUser,
+  type InvestigationRecord,
+  type SafeUser,
+} from '@/lib/truthlens-api'
 import AnalysisResult from '@/components/analysis-result'
 import MediaPreview, { useMediaPreviewUrl } from '@/components/media-preview'
 import MediaUpload from '@/components/media-upload'
+import UserDashboard from '@/components/user-dashboard'
+import AnalysisHistory from '@/components/analysis-history'
 
 const LOGO_URL = 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/TruthLens%20Aperture%20Logo-Zh8uJ1dIwq1yd1IEsjzn4BDgWzmMQA.png'
 
 const navItems = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'investigations', label: 'Investigations' },
+  { key: 'overview', label: 'Dashboard' },
+  { key: 'investigations', label: 'History' },
   { key: 'image-analysis', label: 'Image analysis' },
   { key: 'video-analysis', label: 'Video analysis' },
   { key: 'audio-analysis', label: 'Audio analysis' },
@@ -53,8 +55,8 @@ const navItems = [
 ]
 
 const sectionTitles: Record<string, { title: string; description: string }> = {
-  overview: { title: 'Your investigation workspace', description: 'Monitor your digital forensic investigations and review analysis results.' },
-  investigations: { title: 'Investigations', description: 'Search and review your submitted media investigations.' },
+  overview: { title: 'User Dashboard & Analysis Overview', description: 'Monitor digital forensic examinations, analysis metrics, and recent activities.' },
+  investigations: { title: 'Analysis History & Records', description: 'Search, filter, and review previous forensic evidence investigations.' },
   'image-analysis': { title: 'Image analysis', description: 'Inspect image evidence and trace findings to their source.' },
   'video-analysis': { title: 'Video analysis', description: 'Review frames, timestamps, and temporal evidence in one place.' },
   'audio-analysis': { title: 'Audio analysis', description: 'Explore voice and sound evidence with timestamp-level context.' },
@@ -70,27 +72,30 @@ const supportedTypes: Record<string, { label: string; accept: string; extensions
   'cross-modal': { label: 'Media', accept: 'image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,audio/wav,audio/mpeg,audio/mp4,audio/x-m4a,text/plain', extensions: 'Video (MP4, MOV, WEBM), Audio (MP3, WAV, M4A), Images (JPG, PNG, WEBP), Transcripts (TXT)' },
 }
 
-const acceptedExtensions: Record<string, string[]> = {
-  'image-analysis': ['png', 'jpg', 'jpeg', 'webp'],
-  'video-analysis': ['mp4', 'mov', 'webm'],
-  'audio-analysis': ['wav', 'mp3', 'm4a'],
-  'cross-modal': ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'webm', 'wav', 'mp3', 'm4a', 'txt'],
-}
-
 function formatDate(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'Date not provided' : date.toLocaleDateString()
 }
 
 function Brand() {
-  return <Link className="brand" href="/" aria-label="TruthLens home"><span className="brand-symbol"><img src={LOGO_URL} alt="" /></span><span className="brand-name">TruthLens</span></Link>
+  return (
+    <Link className="brand" href="/" aria-label="TruthLens home">
+      <span className="brand-symbol"><img src={LOGO_URL} alt="" /></span>
+      <span className="brand-name">TruthLens</span>
+    </Link>
+  )
 }
 
 function EmptyState({ title, text, action }: { title: string; text: string; action?: React.ReactNode }) {
-  return <div className="empty-state"><span className="empty-state-icon"><FileSearch aria-hidden="true" /></span><h3>{title}</h3><p>{text}</p>{action}</div>
+  return (
+    <div className="empty-state">
+      <span className="empty-state-icon"><FileSearch aria-hidden="true" /></span>
+      <h3>{title}</h3>
+      <p>{text}</p>
+      {action}
+    </div>
+  )
 }
-
-type AnalysisLifecycle = 'idle' | 'validating' | 'uploading' | 'processing' | 'success' | 'partial-success' | 'failed'
 
 function UploadWorkspace({ section }: { section: string }) {
   const [files, setFiles] = useState<File[]>([])
@@ -98,12 +103,8 @@ function UploadWorkspace({ section }: { section: string }) {
   const [context, setContext] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<number | null>(null)
-  const [analysisStatus, setAnalysisStatus] = useState<AnalysisLifecycle>('idle')
   const [message, setMessage] = useState('')
   const [response, setResponse] = useState<unknown>(null)
-  const isSubmittingRef = useRef<boolean>(false)
-  const resultsRef = useRef<HTMLDivElement>(null)
-
   const config = supportedTypes[section] ?? supportedTypes['cross-modal']
   const sourcePreviewUrl = useMediaPreviewUrl(section === 'image-analysis' ? files[0] : undefined)
   const isCrossModal = section === 'cross-modal'
@@ -113,7 +114,6 @@ function UploadWorkspace({ section }: { section: string }) {
     setFiles(newFiles)
     setResponse(null)
     setMessage('')
-    setAnalysisStatus('idle')
     if (activeFileIndex >= newFiles.length) {
       setActiveFileIndex(Math.max(0, newFiles.length - 1))
     }
@@ -123,23 +123,9 @@ function UploadWorkspace({ section }: { section: string }) {
     const updated = files.filter((_, idx) => idx !== index)
     setFiles(updated)
     setResponse(null)
-    setMessage('')
-    setAnalysisStatus('idle')
     if (activeFileIndex >= updated.length) {
       setActiveFileIndex(Math.max(0, updated.length - 1))
     }
-  }
-
-  const handleReset = () => {
-    setFiles([])
-    setContext('')
-    setResponse(null)
-    setMessage('')
-    setProgress(null)
-    setAnalysisStatus('idle')
-    setActiveFileIndex(0)
-    isSubmittingRef.current = false
-    setBusy(false)
   }
 
   const handleSyncContext = (transcriptText: string) => {
@@ -152,51 +138,16 @@ function UploadWorkspace({ section }: { section: string }) {
   }
 
   const submit = async () => {
-    // 1. Synchronously prevent duplicate concurrent submissions
-    if (isSubmittingRef.current || busy) {
-      return
-    }
-
-    // 2. Validate staged files
     if (!files.length) {
       setMessage('Stage at least one supported digital evidence file to proceed.')
       return
     }
-
-    const maxSizeBytes = 100 * 1024 * 1024
-    for (const f of files) {
-      if (f.size === 0) {
-        setMessage(`The file "${f.name}" is empty (0 bytes). Please upload a valid media file.`)
-        return
-      }
-      if (f.size > maxSizeBytes) {
-        setMessage(`The file "${f.name}" exceeds the maximum 100 MB limit (${(f.size / 1024 / 1024).toFixed(1)} MB).`)
-        return
-      }
-      const ext = f.name.split('.').pop()?.toLowerCase() || ''
-      const allowed = acceptedExtensions[section] || acceptedExtensions['cross-modal']
-      if (allowed && !allowed.includes(ext)) {
-        setMessage(`The format ".${ext}" is not supported for ${config.label.toLowerCase()} analysis. Supported formats: ${config.extensions}.`)
-        return
-      }
-    }
-
-    // 3. Initiate analysis workflow
-    isSubmittingRef.current = true
     setBusy(true)
     setProgress(0)
     setMessage('')
-    setAnalysisStatus('uploading')
-
+    setResponse(null)
     try {
-      const onProgress = (percentage: number) => {
-        setProgress(percentage)
-        if (percentage >= 100) {
-          setAnalysisStatus('processing')
-        }
-      }
-
-      // Execute respective modality API
+      const onProgress = (value: number) => setProgress(value)
       const result = section === 'image-analysis'
         ? await analyzeImage(files[0], context, onProgress)
         : section === 'video-analysis'
@@ -204,273 +155,211 @@ function UploadWorkspace({ section }: { section: string }) {
           : section === 'audio-analysis'
             ? await analyzeAudio(files[0], context, onProgress)
             : await analyzeCrossModal(files, context, onProgress)
-
-      setProgress(100)
       setResponse(result)
-
-      // Refresh global investigations cache
-      mutate('truthlens-investigations').catch(() => {})
-
-      // Check result state: failed, partial-success, or success
-      if (result && typeof result === 'object' && 'status' in result && result.status === 'failed') {
-        setAnalysisStatus('failed')
-        setMessage(result.summary || 'Analysis could not be completed on this evidence. Review processing notices.')
-      } else if (result && typeof result === 'object' && Array.isArray((result as any).processingErrors) && (result as any).processingErrors.length > 0) {
-        setAnalysisStatus('partial-success')
-        setMessage('Analysis completed with technical notices. Empirical findings and timeline are displayed below.')
-      } else {
-        setAnalysisStatus('success')
-        setMessage('Forensic analysis completed. Empirical findings, correlation matrix, and timeline are presented below.')
-      }
-
-      setTimeout(() => {
-        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 150)
+      setProgress(100)
+      setMessage('The configured analysis service responded. Only returned evidence is shown below.')
+      mutate('truthlens-investigations')
     } catch (error) {
-      setAnalysisStatus('failed')
-      setMessage(error instanceof Error ? error.message : 'The analysis service is unavailable. Please verify connection and retry.')
+      setMessage(error instanceof Error ? error.message : 'The analysis service is unavailable.')
       setProgress(null)
     } finally {
       setBusy(false)
-      isSubmittingRef.current = false
     }
   }
 
-  return <>
-    <div className="workspace-content-grid">
-      <section className="workspace-panel upload-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">NEW INVESTIGATION</p>
-            <h2>{isCrossModal ? 'Bring related sources together' : `Start with the ${config.label.toLowerCase()}`}</h2>
+  return (
+    <>
+      <div className="workspace-content-grid">
+        <section className="workspace-panel upload-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">NEW INVESTIGATION</p>
+              <h2>{isCrossModal ? 'Bring related sources together' : `Start with the ${config.label.toLowerCase()}`}</h2>
+            </div>
+            <span className="panel-icon"><Icon aria-hidden="true" /></span>
           </div>
-          <span className="panel-icon"><Icon aria-hidden="true" /></span>
-        </div>
-        <p className="panel-intro">Upload original files and share any context or transcripts that may help reviewers verify authenticity.</p>
+          <p className="panel-intro">Upload original files and share any context or transcripts that may help reviewers verify authenticity.</p>
 
-        {/* Modular Evidence Upload Component */}
-        <MediaUpload
-          files={files}
-          onFilesChange={handleFilesChange}
-          section={section}
-          isBusy={busy}
-          uploadProgress={progress}
-          activeFileIndex={activeFileIndex}
-          onSelectFileIndex={setActiveFileIndex}
-        />
-
-        {/* Modular Evidence Preview Area */}
-        {files.length > 0 && (
-          <MediaPreview
+          <MediaUpload
             files={files}
-            activeIndex={activeFileIndex}
-            onSelectIndex={setActiveFileIndex}
-            onRemoveFile={handleRemoveFile}
-            onSyncContext={handleSyncContext}
-            response={response}
+            onFilesChange={handleFilesChange}
+            section={section}
+            isBusy={busy}
+            uploadProgress={progress}
+            activeFileIndex={activeFileIndex}
+            onSelectFileIndex={setActiveFileIndex}
           />
-        )}
 
-        <label className="field-label" htmlFor="analysis-context">Related context &amp; transcripts <span>Optional</span></label>
-        <textarea
-          id="analysis-context"
-          className="workspace-textarea"
-          value={context}
-          onChange={(event) => setContext(event.target.value)}
-          placeholder="Add a caption, verified transcript, or investigation notes for this media..."
-          rows={4}
-          disabled={busy}
-        />
+          {files.length > 0 && (
+            <MediaPreview
+              files={files}
+              activeIndex={activeFileIndex}
+              onSelectIndex={setActiveFileIndex}
+              onRemoveFile={handleRemoveFile}
+              onSyncContext={handleSyncContext}
+            />
+          )}
 
-        {progress !== null && busy && (
-          <div className="upload-progress" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
-            <span>
-              {analysisStatus === 'processing'
-                ? 'Signal extraction & multimodal correlation in progress…'
-                : progress < 100
-                ? `Uploading evidence stream (${progress}%)`
-                : 'Finalizing analytical report…'}
-            </span>
-            <span className="upload-progress-track"><span style={{ width: `${progress}%` }} /></span>
-            <span>{progress}%</span>
+          <label className="field-label" htmlFor="analysis-context">Related context &amp; transcripts <span>Optional</span></label>
+          <textarea
+            id="analysis-context"
+            className="workspace-textarea"
+            value={context}
+            onChange={(event) => setContext(event.target.value)}
+            placeholder="Add a caption, verified transcript, or investigation notes for this media..."
+            rows={4}
+          />
+
+          {progress !== null && (
+            <div className="upload-progress" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+              <span>{busy && progress < 100 ? 'Uploading source' : busy ? 'Processing response' : 'Upload complete'}</span>
+              <span className="upload-progress-track"><span style={{ width: `${progress}%` }} /></span>
+              <span>{progress}%</span>
+            </div>
+          )}
+
+          {message && <p className="form-feedback" role="status">{message}</p>}
+
+          <div className="upload-actions">
+            <span className="privacy-note"><ShieldCheck aria-hidden="true" /> Files are sent only to the configured backend endpoint.</span>
+            <button className="button button-dark" type="button" onClick={submit} disabled={busy || files.length === 0}>
+              {busy ? <LoaderCircle className="spinning" /> : null}
+              {busy ? 'Analyzing…' : `Start ${config.label.toLowerCase()} analysis`}
+              {!busy && <ArrowRight />}
+            </button>
           </div>
-        )}
+        </section>
 
-        {message && (
-          <div
-            className={`form-feedback ${
-              analysisStatus === 'failed'
-                ? 'error-banner'
-                : analysisStatus === 'partial-success'
-                ? 'warning-banner'
-                : analysisStatus === 'success'
-                ? 'success-banner'
-                : ''
-            }`}
-            role="status"
-            style={{
-              padding: '10px 14px',
-              borderRadius: '8px',
-              marginTop: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              fontSize: '12px',
-              lineHeight: 1.45,
-              background:
-                analysisStatus === 'failed'
-                  ? 'rgba(239, 68, 68, 0.1)'
-                  : analysisStatus === 'partial-success'
-                  ? 'rgba(245, 158, 11, 0.1)'
-                  : analysisStatus === 'success'
-                  ? 'rgba(16, 185, 129, 0.1)'
-                  : undefined,
-              border:
-                analysisStatus === 'failed'
-                  ? '1px solid rgba(239, 68, 68, 0.3)'
-                  : analysisStatus === 'partial-success'
-                  ? '1px solid rgba(245, 158, 11, 0.3)'
-                  : analysisStatus === 'success'
-                  ? '1px solid rgba(16, 185, 129, 0.3)'
-                  : undefined,
-              color:
-                analysisStatus === 'failed'
-                  ? '#fca5a5'
-                  : analysisStatus === 'partial-success'
-                  ? '#fcd34d'
-                  : analysisStatus === 'success'
-                  ? '#6ee7b7'
-                  : undefined,
-            }}
-          >
-            {analysisStatus === 'failed' && <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />}
-            {analysisStatus === 'partial-success' && <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />}
-            {analysisStatus === 'success' && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />}
-            <span style={{ flex: 1 }}>{message}</span>
+        <aside className="workspace-panel analysis-info">
+          <p className="eyebrow">A CAREFUL PROCESS</p>
+          <h2>Evidence first. Interpretation second.</h2>
+          <div className="info-steps">
+            <div><span>01</span><p>Files are submitted to the configurable analysis service.</p></div>
+            <div><span>02</span><p>Returned findings include only fields supplied by the backend.</p></div>
+            <div><span>03</span><p>Reviewers decide what the evidence means in context.</p></div>
           </div>
-        )}
-
-        <div className="upload-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '16px' }}>
-          <span className="privacy-note"><ShieldCheck aria-hidden="true" /> Files are sent only to the configured backend endpoint.</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {analysisStatus === 'failed' && (
-              <>
-                <button
-                  className="button button-outline"
-                  type="button"
-                  onClick={handleReset}
-                  title="Clear files and reset investigation"
-                >
-                  <RotateCcw className="h-4 w-4" /> Clear
-                </button>
-                <button
-                  className="button button-dark"
-                  type="button"
-                  onClick={submit}
-                  disabled={busy || files.length === 0}
-                  title="Retry analysis on current evidence"
-                >
-                  <RefreshCw className={`h-4 w-4 ${busy ? 'spinning' : ''}`} /> Retry analysis
-                </button>
-              </>
-            )}
-
-            {(analysisStatus === 'success' || analysisStatus === 'partial-success') && (
-              <button
-                className="button button-outline"
-                type="button"
-                onClick={handleReset}
-                title="Start a new investigation"
-              >
-                <Plus className="h-4 w-4" /> New investigation
-              </button>
-            )}
-
-            {analysisStatus !== 'failed' && (
-              <button
-                className="button button-dark"
-                type="button"
-                onClick={submit}
-                disabled={busy || files.length === 0}
-              >
-                {busy ? <LoaderCircle className="spinning" /> : null}
-                {busy ? 'Analyzing…' : `Start ${config.label.toLowerCase()} analysis`}
-                {!busy && <ArrowRight />}
-              </button>
-            )}
+          <div className="notice-box">
+            <AlertCircle aria-hidden="true" />
+            <p>TruthLens does not create detections locally. No findings are shown until the backend returns them.</p>
           </div>
-        </div>
-      </section>
-
-      <aside className="workspace-panel analysis-info">
-        <p className="eyebrow">A CAREFUL PROCESS</p>
-        <h2>Evidence first. Interpretation second.</h2>
-        <div className="info-steps">
-          <div><span>01</span><p>Files are submitted to the configurable analysis service.</p></div>
-          <div><span>02</span><p>Returned findings include only fields supplied by the backend.</p></div>
-          <div><span>03</span><p>Reviewers decide what the evidence means in context.</p></div>
-        </div>
-        <div className="notice-box">
-          <AlertCircle aria-hidden="true" />
-          <p>TruthLens does not create detections locally. No findings are shown until the backend returns them.</p>
-        </div>
-      </aside>
-    </div>
-    <div ref={resultsRef}>
+        </aside>
+      </div>
       {response !== null && <AnalysisResult response={response} section={config.label} sourcePreviewUrl={sourcePreviewUrl ?? undefined} />}
-    </div>
-  </>
-}
-
-function Overview() {
-  const { data, error, isLoading } = useSWR('truthlens-investigations', listInvestigations, { revalidateOnFocus: false })
-  const records = [...(data ?? [])].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-  const reviewedValuesAvailable = records.length > 0 && records.every((record) => typeof record.requiresReview === 'boolean')
-  const reviewCount = reviewedValuesAvailable ? String(records.filter((record) => record.requiresReview).length) : '—'
-  const stats = [
-    ['Total investigations', isLoading || error ? '—' : String(records.length), FileSearch],
-    ['Images analysed', isLoading || error ? '—' : String(records.filter((record) => record.mediaType === 'image').length), ImageIcon],
-    ['Videos analysed', isLoading || error ? '—' : String(records.filter((record) => record.mediaType === 'video').length), Video],
-    ['Audio files analysed', isLoading || error ? '—' : String(records.filter((record) => record.mediaType === 'audio').length), AudioLines],
-    ['Requires further review', isLoading || error ? '—' : reviewCount, CircleHelp],
-  ] as const
-  const reports = records.filter((record) => record.reportId).slice(0, 3)
-
-  return <>
-    {error && <p className="form-feedback dashboard-feedback" role="status">Workspace totals are unavailable until the analysis service is connected.</p>}
-    <div className="stats-grid">{stats.map(([label, value, Icon]) => <article className="stat-card" key={label}><div className="stat-label"><span>{label}</span><Icon aria-hidden="true" /></div><strong>{value}</strong><span className="stat-footnote">{error ? 'Service not connected' : isLoading ? 'Loading live totals' : label === 'Requires further review' && reviewCount === '—' ? 'Not returned by the service' : 'From returned records'}</span></article>)}</div>
-    <div className="overview-grid">
-      <section className="workspace-panel recent-panel"><div className="panel-heading"><div><p className="eyebrow">YOUR ACTIVITY</p><h2>Recent investigations</h2></div><Link className="subtle-link" href="/workspace?section=investigations">View all <ArrowRight /></Link></div>{records.length ? <div className="overview-record-list">{records.slice(0, 4).map((record) => <div className="overview-record-row" key={record.id}><FileSearch aria-hidden="true" /><div><strong>{record.filename}</strong><small>{record.mediaType} · {formatDate(record.createdAt)} · {record.status}</small></div><Link href={`/workspace?investigation=${encodeURIComponent(record.id)}`}>View</Link></div>)}</div> : <EmptyState title={isLoading ? 'Loading investigations' : 'Your workspace is ready'} text={error ? 'Connect the analysis backend to load returned investigation records.' : 'Investigations will appear here when returned by the analysis service.'} action={!error && !isLoading ? <Link className="button button-outline" href="/workspace?section=image-analysis"><Plus /> New investigation</Link> : undefined} />}</section>
-      <section className="workspace-panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">WORKSPACE STATUS</p><h2>Analysis activity</h2></div><Activity aria-hidden="true" /></div>{records.length ? <div className="overview-record-list">{records.slice(0, 3).map((record) => <div className="overview-record-row" key={record.id}><Clock3 aria-hidden="true" /><div><strong>{record.filename}</strong><small>Service status: {record.status}</small></div></div>)}</div> : <div className="activity-empty"><span className="activity-line" /><p>No returned analysis activity</p><span>Activity appears when the service returns records.</span></div>}</section>
-      <section className="workspace-panel status-panel"><div className="panel-heading"><div><p className="eyebrow">OVERVIEW</p><h2>Investigation status</h2></div><Clock3 aria-hidden="true" /></div>{records.length ? <div className="status-empty"><span className="status-ring"><Check aria-hidden="true" /></span><p>{reviewedValuesAvailable ? `${reviewCount} flagged for review` : 'Review flags not returned'}</p><span>Status reflects only fields returned by the service.</span></div> : <div className="status-empty"><span className="status-ring"><Check aria-hidden="true" /></span><p>No returned investigations</p><span>Review status will appear with live records.</span></div>}</section>
-      <section className="workspace-panel reports-panel"><div className="panel-heading"><div><p className="eyebrow">DOCUMENTS</p><h2>Recent reports</h2></div><Link className="subtle-link" href="/workspace?section=reports">Browse reports <ArrowRight /></Link></div>{reports.length ? <div className="overview-record-list">{reports.map((record) => <div className="overview-record-row" key={record.reportId}><FileText aria-hidden="true" /><div><strong>{record.filename}</strong><small>Report {record.reportId}</small></div><Link href={`/workspace?section=reports&report=${encodeURIComponent(record.reportId!)}`}>Open</Link></div>)}</div> : <EmptyState title="No reports returned" text="Reports appear here when the backend returns report IDs for completed investigations." />}</section>
-    </div>
-  </>
-}
-
-function Investigations() {
-  const [query, setQuery] = useState('')
-  const [mediaFilter, setMediaFilter] = useState('all')
-  const [newestFirst, setNewestFirst] = useState(true)
-  const { data, error, isLoading } = useSWR('truthlens-investigations', listInvestigations, { revalidateOnFocus: false })
-  const records = useMemo(() => (data ?? []).filter((record) => `${record.id} ${record.filename}`.toLowerCase().includes(query.toLowerCase()) && (mediaFilter === 'all' || record.mediaType === mediaFilter)).sort((a, b) => {
-    const difference = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    return newestFirst ? -difference : difference
-  }), [data, mediaFilter, newestFirst, query])
-
-  return <section className="workspace-panel investigations-panel">
-    <div className="history-toolbar"><label className="search-field"><Search aria-hidden="true" /><span className="sr-only">Search investigations</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by file name or investigation ID" /></label><label className="history-filter">Filter media <select value={mediaFilter} onChange={(event) => setMediaFilter(event.target.value)}><option value="all">All media</option><option value="image">Images</option><option value="video">Videos</option><option value="audio">Audio</option><option value="text">Text</option></select></label><button className="button button-outline" type="button" onClick={() => setNewestFirst((current) => !current)}><ArrowDown aria-hidden="true" /> Sort: {newestFirst ? 'newest' : 'oldest'}</button></div>
-    {error && <p className="form-feedback" role="status">Investigation history is unavailable until the analysis service is connected.</p>}
-    <div className="history-table-wrap"><table className="history-table"><thead><tr><th>Investigation</th><th>Media type</th><th>Date</th><th>Status</th><th>Assessment</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{records.length > 0 ? records.map((record) => <tr key={record.id}><td>{record.filename}<small className="record-id">{record.id}</small></td><td>{record.mediaType}</td><td>{formatDate(record.createdAt)}</td><td>{record.status}</td><td>{record.assessment ?? 'Not provided'}</td><td><Link className="subtle-link" href={`/workspace?investigation=${encodeURIComponent(record.id)}`}>View results <ArrowRight /></Link>{record.reportId && <Link className="subtle-link" href={`/workspace?section=reports&report=${encodeURIComponent(record.reportId)}`}>Report</Link>}</td></tr>) : <tr><td colSpan={6}><EmptyState title={isLoading ? 'Loading investigations' : error ? 'History unavailable' : query || mediaFilter !== 'all' ? 'No matching investigations' : 'No investigations yet'} text={error ? 'Connect the analysis service to load returned investigation records.' : 'When the backend returns investigation records, they will appear here for searching and review.'} action={!isLoading && !error ? <Link className="button button-dark" href="/workspace?section=image-analysis"><Plus /> New investigation</Link> : undefined} /></td></tr>}</tbody></table></div>
-  </section>
+    </>
+  )
 }
 
 function InvestigationDetails({ id }: { id: string }) {
-  const { data: record, error, isLoading } = useSWR(['truthlens-investigation', id], ([, investigationId]) => getInvestigation(investigationId), { revalidateOnFocus: false })
-  if (isLoading) return <section className="workspace-panel"><p role="status">Loading investigation details…</p></section>
-  if (error || !record) return <section className="workspace-panel"><EmptyState title="Investigation unavailable" text="The configured service did not return this investigation. Check the ID or connect the FastAPI backend." /></section>
+  const { data: record, error, isLoading } = useSWR(
+    ['truthlens-investigation', id],
+    ([, investigationId]) => getInvestigation(investigationId),
+    { revalidateOnFocus: false }
+  )
 
-  return <section className="workspace-panel investigation-detail-panel"><div className="panel-heading"><div><p className="eyebrow">RETURNED INVESTIGATION</p><h2>{record.filename}</h2></div><span className="response-status">{record.status}</span></div><dl className="investigation-detail-grid"><div><dt>Investigation ID</dt><dd>{record.id}</dd></div><div><dt>Media type</dt><dd>{record.mediaType}</dd></div><div><dt>Date submitted</dt><dd>{formatDate(record.createdAt)}</dd></div><div><dt>Assessment</dt><dd>{record.assessment ?? 'Not provided by the service'}</dd></div><div><dt>Review flag</dt><dd>{typeof record.requiresReview === 'boolean' ? (record.requiresReview ? 'Review requested' : 'No review flag returned') : 'Not provided by the service'}</dd></div></dl><div className="investigation-detail-actions">{record.reportId && <Link className="button button-outline" href={`/workspace?section=reports&report=${encodeURIComponent(record.reportId)}`}><FileText /> Download report <ArrowRight /></Link>}<Link className="button button-outline" href="/workspace?section=investigations">Back to investigations</Link></div></section>
+  if (isLoading) {
+    return (
+      <section className="workspace-panel">
+        <div className="p-6 text-center text-slate-400 flex items-center justify-center gap-3">
+          <LoaderCircle className="spinning h-5 w-5 text-cyan-400" />
+          <span>Loading investigation details and historical evidence…</span>
+        </div>
+      </section>
+    )
+  }
+
+  if (error || !record) {
+    return (
+      <section className="workspace-panel">
+        <EmptyState
+          title="Investigation unavailable"
+          text="The requested investigation could not be found or you do not have permission to view it."
+          action={
+            <Link className="button button-outline mt-3" href="/workspace?section=investigations">
+              Back to History
+            </Link>
+          }
+        />
+      </section>
+    )
+  }
+
+  const isReviewRequested = record.requiresReview === true
+
+  return (
+    <div className="investigation-reopened-wrapper flex flex-col gap-6">
+      {/* Header Overview Card */}
+      <section className="workspace-panel investigation-detail-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">PREVIOUS FORENSIC RECORD</p>
+            <h2>{record.filename}</h2>
+          </div>
+          <span className={`status-pill ${isReviewRequested ? 'flagged' : 'passed'}`}>
+            {isReviewRequested ? 'Review Requested' : 'Completed'}
+          </span>
+        </div>
+
+        <dl className="investigation-detail-grid">
+          <div>
+            <dt>Investigation ID</dt>
+            <dd className="font-mono text-cyan-300">{record.id}</dd>
+          </div>
+          <div>
+            <dt>Media Modality</dt>
+            <dd className="capitalize font-semibold">{record.mediaType}</dd>
+          </div>
+          <div>
+            <dt>Date Submitted</dt>
+            <dd>{formatDate(record.createdAt)}</dd>
+          </div>
+          <div>
+            <dt>Assessment Summary</dt>
+            <dd>{record.assessment || 'Analysis completed with verified analytical output parameters.'}</dd>
+          </div>
+          <div>
+            <dt>Review Recommendation</dt>
+            <dd>{isReviewRequested ? 'Requires Human Examiner Review' : 'No Significant Anomalies Detected'}</dd>
+          </div>
+        </dl>
+
+        <div className="investigation-detail-actions flex items-center justify-between flex-wrap gap-3 mt-4 pt-4 border-t border-slate-800">
+          <div className="flex items-center gap-3">
+            <Link className="button button-outline" href="/workspace?section=investigations">
+              ← Back to History
+            </Link>
+            <Link className="button button-outline" href="/workspace?section=overview">
+              Dashboard
+            </Link>
+          </div>
+
+          {record.reportId && (
+            <Link
+              className="button button-dark"
+              href={`/workspace?section=reports&report=${encodeURIComponent(record.reportId)}`}
+            >
+              <FileText className="h-4 w-4 mr-1.5 text-emerald-400" /> Reopen Forensic PDF Report
+            </Link>
+          )}
+        </div>
+      </section>
+
+      {/* Full Reopened Analysis Result & Explainable Evidence Viewer */}
+      {record.output ? (
+        <div className="reopened-analysis-section">
+          <AnalysisResult
+            response={record.output}
+            section={record.mediaType.toUpperCase()}
+          />
+        </div>
+      ) : (
+        <section className="workspace-panel">
+          <div className="p-4 text-center text-slate-400">
+            <p>Historical record metadata loaded. Full telemetry output cache was not recorded for this legacy item.</p>
+          </div>
+        </section>
+      )}
+    </div>
+  )
 }
 
 function Reports({ initialId }: { initialId: string }) {
@@ -495,7 +384,9 @@ function Reports({ initialId }: { initialId: string }) {
     setReportUrl(null)
     try {
       const blob = await getReport(id)
-      if (blob.type.split(';')[0].trim().toLowerCase() !== 'application/pdf') throw new Error('The report endpoint did not return a PDF, so no preview or download was generated.')
+      if (blob.type.split(';')[0].trim().toLowerCase() !== 'application/pdf') {
+        throw new Error('The report endpoint did not return a PDF, so no preview or download was generated.')
+      }
       const objectUrl = URL.createObjectURL(blob)
       setReportUrl(objectUrl)
       const link = document.createElement('a')
@@ -504,7 +395,7 @@ function Reports({ initialId }: { initialId: string }) {
       document.body.append(link)
       link.click()
       link.remove()
-      setMessage('The report was returned by the configured service, previewed below, and downloaded.')
+      setMessage('The report was retrieved, previewed below, and downloaded.')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The report service is unavailable.')
     } finally {
@@ -512,15 +403,134 @@ function Reports({ initialId }: { initialId: string }) {
     }
   }
 
-  return <section className="workspace-panel reports-empty-panel"><div className="report-placeholder"><span className="report-document"><FileText aria-hidden="true" /></span><p className="eyebrow">REPORT LIBRARY</p><h2>Retrieve a forensic report.</h2><p>Enter a report ID returned by your analysis service. TruthLens will download the file only when the configured backend provides it.</p><form className="report-lookup" onSubmit={download}><label className="sr-only" htmlFor="report-id">Report ID</label><input id="report-id" value={reportId} onChange={(event) => { setReportId(event.target.value); setReportUrl(null) }} placeholder="Enter report ID" autoComplete="off" /><button className="button button-dark" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spinning" /> : <FileText />}{busy ? 'Retrieving…' : 'Download PDF'}</button></form>{message && <p className="form-feedback report-feedback" role="status">{message}</p>}{reportUrl && <div className="report-preview"><div className="report-preview-heading"><strong>Returned report preview</strong><a href={reportUrl} download={`truthlens-report-${reportId.replace(/[^a-z0-9._-]/gi, '-')}.pdf`}>Download again <ArrowRight /></a></div><iframe src={reportUrl} title={`Forensic report ${reportId}`} /></div>}<Link className="button button-outline" href="/workspace?section=investigations">View investigations <ArrowRight /></Link></div></section>
+  return (
+    <section className="workspace-panel reports-empty-panel">
+      <div className="report-placeholder">
+        <span className="report-document"><FileText aria-hidden="true" /></span>
+        <p className="eyebrow">REPORT LIBRARY</p>
+        <h2>Retrieve a forensic report.</h2>
+        <p>Enter a report ID returned by your analysis service. TruthLens will download the file only when the configured backend provides it.</p>
+        <form className="report-lookup" onSubmit={download}>
+          <label className="sr-only" htmlFor="report-id">Report ID</label>
+          <input
+            id="report-id"
+            value={reportId}
+            onChange={(event) => { setReportId(event.target.value); setReportUrl(null) }}
+            placeholder="Enter report ID (e.g. rep-baseline-001)"
+            autoComplete="off"
+          />
+          <button className="button button-dark" type="submit" disabled={busy}>
+            {busy ? <LoaderCircle className="spinning" /> : <FileText />}
+            {busy ? 'Retrieving…' : 'Download PDF'}
+          </button>
+        </form>
+        {message && <p className="form-feedback report-feedback" role="status">{message}</p>}
+        {reportUrl && (
+          <div className="report-preview">
+            <div className="report-preview-heading">
+              <strong>Returned report preview</strong>
+              <a href={reportUrl} download={`truthlens-report-${reportId.replace(/[^a-z0-9._-]/gi, '-')}.pdf`}>
+                Download again <ArrowRight />
+              </a>
+            </div>
+            <iframe src={reportUrl} title={`Forensic report ${reportId}`} />
+          </div>
+        )}
+        <Link className="button button-outline" href="/workspace?section=investigations">
+          View investigations <ArrowRight />
+        </Link>
+      </div>
+    </section>
+  )
 }
 
-function Settings() {
-  return <div className="settings-grid">
-    <section className="workspace-panel settings-card"><p className="eyebrow">PROFILE</p><div className="profile-placeholder"><span><UserRound /></span><div><h2>Account profile</h2><p>Sign in and profile details require an authentication service.</p></div></div><button className="button button-outline" type="button" disabled>Edit profile</button></section>
-    <section className="workspace-panel settings-card"><p className="eyebrow">SECURITY</p><h2>Account security</h2><p>Password changes, active sessions, and sign-out are unavailable until authentication is connected.</p><div className="settings-actions"><button className="button button-outline" type="button" disabled>Change password</button><button className="button button-outline" type="button" disabled>Sign out</button></div></section>
-    <section className="workspace-panel settings-card"><p className="eyebrow">NOTIFICATIONS</p><h2>Notification preferences</h2><p>Notification preferences can be configured after an account service is connected.</p><label className="settings-disabled-option"><input type="checkbox" disabled /> Investigation updates</label></section>
-  </div>
+function Settings({ user, isGuest }: { user: SafeUser | null; isGuest: boolean }) {
+  const router = useRouter()
+  const [signingOut, setSigningOut] = useState(false)
+
+  const handleSignOut = async () => {
+    setSigningOut(true)
+    try {
+      await logoutUser()
+      router.push('/login')
+    } catch {
+      router.push('/login')
+    }
+  }
+
+  return (
+    <div className="settings-grid">
+      <section className="workspace-panel settings-card">
+        <p className="eyebrow">PROFILE &amp; CREDENTIALS</p>
+        <div className="profile-placeholder">
+          <span className="profile-glyph">
+            {user ? user.name.slice(0, 2).toUpperCase() : <UserRound />}
+          </span>
+          <div>
+            <h2>{user ? user.name : isGuest ? 'Guest Sandbox Session' : 'Analyst Profile'}</h2>
+            <p className="user-email-text">{user ? user.email : 'Unauthenticated temporary session'}</p>
+            <span className="user-role-badge">
+              {user?.role === 'lead_analyst'
+                ? 'Lead Forensic Analyst'
+                : user?.role === 'investigator'
+                  ? 'Digital Forensics Examiner'
+                  : 'Sandbox Guest'}
+            </span>
+          </div>
+        </div>
+        {user ? (
+          <div className="profile-meta-tags mt-3">
+            <small className="text-slate-400">Account ID: <code className="text-cyan-400">{user.id}</code></small>
+            <small className="text-slate-400 block mt-1">
+              Member Since: {formatDate(user.createdAt)}
+            </small>
+          </div>
+        ) : (
+          <Link href="/login" className="button button-dark mt-3">
+            Sign in to an existing account
+          </Link>
+        )}
+      </section>
+
+      <section className="workspace-panel settings-card">
+        <p className="eyebrow">SESSION SECURITY</p>
+        <h2>Account Session &amp; Access</h2>
+        <p>Your session maintains strict data boundary isolation. Analysis records are restricted exclusively to your user ID.</p>
+        <div className="settings-actions mt-4">
+          {user ? (
+            <button
+              className="button button-outline text-rose-400 border-rose-800/40 hover:bg-rose-950/20"
+              type="button"
+              onClick={handleSignOut}
+              disabled={signingOut}
+            >
+              <LogOut className="h-4 w-4 mr-1.5" />
+              {signingOut ? 'Signing out…' : 'Sign out'}
+            </button>
+          ) : (
+            <Link className="button button-outline" href="/register">
+              Create an account
+            </Link>
+          )}
+        </div>
+      </section>
+
+      <section className="workspace-panel settings-card">
+        <p className="eyebrow">FORENSIC ENGINE</p>
+        <h2>Pipeline Preferences</h2>
+        <p>Local analysis engines and deterministic heuristics are active.</p>
+        <label className="settings-disabled-option">
+          <input type="checkbox" defaultChecked disabled /> ViT-Deepfake Neural Model v1
+        </label>
+        <label className="settings-disabled-option">
+          <input type="checkbox" defaultChecked disabled /> Error Level Analysis (ELA)
+        </label>
+        <label className="settings-disabled-option">
+          <input type="checkbox" defaultChecked disabled /> Tri-Modal Multimodal Correlation Engine
+        </label>
+      </section>
+    </div>
+  )
 }
 
 export default function WorkspaceShell() {
@@ -529,21 +539,133 @@ export default function WorkspaceShell() {
   const investigationId = searchParams.get('investigation')
   const reportQuery = searchParams.get('report') ?? ''
   const [menuOpen, setMenuOpen] = useState(false)
-  const page = sectionTitles[section] ? section : 'overview'
-  const pageTitle = investigationId ? { title: 'Investigation details', description: 'Review only the file details and findings returned by your configured analysis service.' } : sectionTitles[page]
-  const activeNav = useMemo(() => investigationId ? 'investigations' : navItems.find((item) => item.key === page)?.key ?? '', [investigationId, page])
 
-  return <main className="workspace-shell">
-    <header className="app-nav"><Brand /><nav className={`app-nav-links ${menuOpen ? 'is-open' : ''}`} aria-label="Workspace navigation">{navItems.map(({ key, label }) => <Link className={activeNav === key ? 'active' : ''} href={`/workspace?section=${key}`} key={key} onClick={() => setMenuOpen(false)}>{label}</Link>)}<Link className={page === 'cross-modal' && !investigationId ? 'active' : ''} href="/workspace?section=cross-modal" onClick={() => setMenuOpen(false)}>Cross-modal</Link></nav><div className="app-nav-actions"><button type="button" className="icon-button" aria-label="Notifications" disabled><Bell /></button><Link className="profile-button" href="/workspace?section=settings"><span className="profile-avatar">T</span><span>Account</span><ChevronDown /></Link></div><button className="mobile-menu-button app-menu-toggle" type="button" aria-label={menuOpen ? 'Close workspace navigation' : 'Open workspace navigation'} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X /> : <Menu />}</button></header>
-    <div className="workspace-main"><div className="workspace-title-row"><div><p className="eyebrow">TRUTHLENS WORKSPACE</p><h1>{pageTitle.title}</h1><p>{pageTitle.description}</p></div><Link className="button button-dark workspace-new" href="/workspace?section=image-analysis"><Plus /> New investigation</Link></div>
-      {investigationId ? <InvestigationDetails id={investigationId} /> : <>
-        {page === 'overview' && <Overview />}
-        {page === 'investigations' && <Investigations />}
-        {['image-analysis', 'video-analysis', 'audio-analysis', 'cross-modal'].includes(page) && <UploadWorkspace section={page} />}
-        {page === 'reports' && <Reports key={reportQuery} initialId={reportQuery} />}
-        {page === 'settings' && <Settings />}
-      </>}
-      <footer className="workspace-footer"><span>TruthLens · Evidence-led review</span><span>Analysis findings are not absolute proof.</span><Link href="mailto:hello@truthlens.ai">Help &amp; support</Link></footer>
-    </div>
-  </main>
+  // Fetch Current User
+  const { data: authData } = useSWR('/api/auth/me', getCurrentUser, { revalidateOnFocus: false })
+  const user = authData?.user ?? null
+  const isGuest = authData?.isGuest ?? true
+
+  // Fetch Investigations List
+  const { data: investigationsData, error: investigationsError, isLoading: investigationsLoading } = useSWR(
+    'truthlens-investigations',
+    listInvestigations,
+    { revalidateOnFocus: false }
+  )
+
+  const records = useMemo(() => {
+    return [...(investigationsData ?? [])].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    )
+  }, [investigationsData])
+
+  const page = sectionTitles[section] ? section : 'overview'
+  const pageTitle = investigationId
+    ? { title: 'Investigation details', description: 'Review the file details, findings, and explainable AI telemetry returned for this evidence.' }
+    : sectionTitles[page]
+
+  const activeNav = useMemo(
+    () => investigationId ? 'investigations' : navItems.find((item) => item.key === page)?.key ?? '',
+    [investigationId, page]
+  )
+
+  const userInitials = user?.name
+    ? user.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
+    : 'T'
+
+  return (
+    <main className="workspace-shell">
+      <header className="app-nav">
+        <Brand />
+        <nav className={`app-nav-links ${menuOpen ? 'is-open' : ''}`} aria-label="Workspace navigation">
+          {navItems.map(({ key, label }) => (
+            <Link
+              className={activeNav === key ? 'active' : ''}
+              href={`/workspace?section=${key}`}
+              key={key}
+              onClick={() => setMenuOpen(false)}
+            >
+              {label}
+            </Link>
+          ))}
+          <Link
+            className={page === 'cross-modal' && !investigationId ? 'active' : ''}
+            href="/workspace?section=cross-modal"
+            onClick={() => setMenuOpen(false)}
+          >
+            Cross-modal
+          </Link>
+        </nav>
+
+        <div className="app-nav-actions">
+          <button type="button" className="icon-button" aria-label="Notifications" disabled>
+            <Bell />
+          </button>
+          <Link className="profile-button" href="/workspace?section=settings">
+            <span className="profile-avatar">{userInitials}</span>
+            <span>{user ? user.name.split(' ')[0] : 'Account'}</span>
+            <ChevronDown />
+          </Link>
+        </div>
+
+        <button
+          className="mobile-menu-button app-menu-toggle"
+          type="button"
+          aria-label={menuOpen ? 'Close workspace navigation' : 'Open workspace navigation'}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          {menuOpen ? <X /> : <Menu />}
+        </button>
+      </header>
+
+      <div className="workspace-main">
+        <div className="workspace-title-row">
+          <div>
+            <p className="eyebrow">TRUTHLENS FORENSIC WORKSPACE</p>
+            <h1>{pageTitle.title}</h1>
+            <p>{pageTitle.description}</p>
+          </div>
+          <Link className="button button-dark workspace-new" href="/workspace?section=image-analysis">
+            <Plus /> New investigation
+          </Link>
+        </div>
+
+        {investigationId ? (
+          <InvestigationDetails id={investigationId} />
+        ) : (
+          <>
+            {page === 'overview' && (
+              <UserDashboard
+                user={user}
+                isGuest={isGuest}
+                records={records}
+                isLoading={investigationsLoading}
+                error={investigationsError ? new Error(String(investigationsError)) : null}
+                onRefresh={() => mutate('truthlens-investigations')}
+              />
+            )}
+            {page === 'investigations' && (
+              <AnalysisHistory
+                records={records}
+                isLoading={investigationsLoading}
+                error={investigationsError ? new Error(String(investigationsError)) : null}
+                onRefresh={() => mutate('truthlens-investigations')}
+              />
+            )}
+            {['image-analysis', 'video-analysis', 'audio-analysis', 'cross-modal'].includes(page) && (
+              <UploadWorkspace section={page} />
+            )}
+            {page === 'reports' && <Reports key={reportQuery} initialId={reportQuery} />}
+            {page === 'settings' && <Settings user={user} isGuest={isGuest} />}
+          </>
+        )}
+
+        <footer className="workspace-footer">
+          <span>TruthLens · Evidence-led digital forensics</span>
+          <span>Automated model outputs are not absolute proof of manipulation.</span>
+          <Link href="mailto:support@truthlens.ai">Examiner Support</Link>
+        </footer>
+      </div>
+    </main>
+  )
 }

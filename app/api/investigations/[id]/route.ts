@@ -3,6 +3,7 @@ import { investigationStore } from '@/lib/backend-engine/investigation-store'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { validateIdParam } from '@/lib/backend-engine/security-utils'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
+import { authService } from '@/lib/backend-engine/auth-service'
 
 export async function GET(
   req: NextRequest,
@@ -21,16 +22,26 @@ export async function GET(
       )
     }
 
-    const record = investigationStore.getRecord(validId)
+    const { effectiveUserId } = authService.getAuthContext(req)
+    const record = investigationStore.getRecord(validId, effectiveUserId)
 
     if (!record) {
       return NextResponse.json(
-        { detail: `Investigation with ID "${validId}" was not found.` },
+        { detail: `Investigation with ID "${validId}" was not found or access is restricted.` },
         { status: 404 }
       )
     }
 
-    return NextResponse.json(record, { status: 200 })
+    // Attach analysis output if available so client can reopen previous analysis results
+    const output = investigationStore.getOutput(validId, effectiveUserId)
+
+    return NextResponse.json(
+      {
+        ...record,
+        output: output ?? null,
+      },
+      { status: 200 }
+    )
   } catch (err) {
     return createSafeErrorResponse(err, 'Failed to retrieve investigation details.', 500)
   }

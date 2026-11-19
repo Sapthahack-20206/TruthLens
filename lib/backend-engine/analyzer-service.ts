@@ -12,7 +12,8 @@ export async function processAndAnalyzeMedia(
   file: File | Blob,
   originalFilename = 'evidence.bin',
   context = '',
-  modalityOverride?: 'video' | 'audio' | 'image'
+  modalityOverride?: 'video' | 'audio' | 'image',
+  userId?: string
 ): Promise<ForensicAnalysisOutput> {
   const analysisId = `TL-${crypto.randomBytes(6).toString('hex').toUpperCase()}`
   const investigationId = `inv-${crypto.randomBytes(6).toString('hex')}`
@@ -48,7 +49,19 @@ export async function processAndAnalyzeMedia(
         createdAt: now,
         completedAt: new Date().toISOString(),
       }
-      investigationStore.saveOutput(failedOutput)
+      investigationStore.saveOutput(failedOutput, userId)
+      investigationStore.saveRecord({
+        id: investigationId,
+        filename: originalFilename,
+        mediaType: modalityOverride || 'image',
+        createdAt: now,
+        status: 'failed',
+        assessment: 'Validation failed.',
+        requiresReview: true,
+        reportId,
+        userId,
+        uncertaintyStatus: 'Requires Further Review',
+      })
       return failedOutput
     }
 
@@ -196,7 +209,7 @@ export async function processAndAnalyzeMedia(
     }
 
     // Save to stores
-    investigationStore.saveOutput(finalOutput)
+    investigationStore.saveOutput(finalOutput, userId)
     investigationStore.saveRecord({
       id: investigationId,
       filename: metadata.filename,
@@ -206,6 +219,9 @@ export async function processAndAnalyzeMedia(
       assessment,
       requiresReview: uncertaintyStatus !== 'No Significant Indicators Detected',
       reportId,
+      userId,
+      fileSize: metadata.fileSize,
+      uncertaintyStatus,
     })
 
     return finalOutput

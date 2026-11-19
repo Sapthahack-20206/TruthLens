@@ -4,6 +4,7 @@ import { generateForensicPdfBlob, type ForensicReportData } from '@/components/f
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { validateIdParam } from '@/lib/backend-engine/security-utils'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
+import { authService } from '@/lib/backend-engine/auth-service'
 
 export async function GET(
   req: NextRequest,
@@ -22,19 +23,35 @@ export async function GET(
       )
     }
 
-    const output = investigationStore.getOutput(validId)
+    const { effectiveUserId } = authService.getAuthContext(req)
+
+    // Lookup output or record to verify ownership
+    const output = investigationStore.getOutput(validId, effectiveUserId)
+    const record = investigationStore.getRecord(validId, effectiveUserId)
+
+    // Baseline sample report rep-baseline-001 is open for inspection
+    if (!output && !record && validId !== 'rep-baseline-001') {
+      return NextResponse.json(
+        { detail: `Forensic report "${validId}" was not found or access is restricted.` },
+        { status: 404 }
+      )
+    }
 
     const reportData: ForensicReportData = {
       reportId: validId,
-      investigationId: output?.investigationId ?? validId,
+      investigationId: output?.investigationId ?? record?.id ?? validId,
       title: 'TruthLens Forensic Investigation Report',
       date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-      mediaFilename: output?.metadata?.filename ?? 'evidence-source.mp4',
-      mediaType: output?.metadata?.mimeType ?? 'Media Evidence',
-      fileSize: output?.metadata?.fileSize ? `${(output.metadata.fileSize / 1024 / 1024).toFixed(2)} MB` : undefined,
-      overallStatus: output?.uncertaintyStatus ?? 'Requires Further Review',
+      mediaFilename: output?.metadata?.filename ?? record?.filename ?? 'evidence-source.mp4',
+      mediaType: output?.metadata?.mimeType ?? record?.mediaType ?? 'Media Evidence',
+      fileSize: output?.metadata?.fileSize
+        ? `${(output.metadata.fileSize / 1024 / 1024).toFixed(2)} MB`
+        : record?.fileSize
+          ? `${(record.fileSize / 1024 / 1024).toFixed(2)} MB`
+          : undefined,
+      overallStatus: output?.uncertaintyStatus ?? (record?.requiresReview ? 'Requires Further Review' : 'No Significant Indicators Detected'),
       confidenceScore: output?.findings?.[0]?.confidence ?? 94,
-      summary: output?.summary ?? 'Examination completed with verified analytical output parameters.',
+      summary: output?.summary ?? record?.assessment ?? 'Examination completed with verified analytical output parameters.',
       videoFindings: (output?.findings ?? [])
         .filter((f) => f.category === 'video')
         .map((f) => ({

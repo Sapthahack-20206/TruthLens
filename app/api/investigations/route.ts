@@ -4,14 +4,92 @@ import { processAndAnalyzeMedia } from '@/lib/backend-engine/analyzer-service'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { sanitizeContextString, sanitizeFilename } from '@/lib/backend-engine/security-utils'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
+import { authService } from '@/lib/backend-engine/auth-service'
 
 export async function GET(req: NextRequest) {
   const rateLimitResponse = enforceRateLimit(req, 'read')
   if (rateLimitResponse) return rateLimitResponse
 
   try {
-    const list = investigationStore.listRecords()
-    return NextResponse.json(list, { status: 200 })
+    const { effectiveUserId } = authService.getAuthContext(req)
+    const { searchParams } = new URL(req.url)
+
+    const query = (searchParams.get('search') || '').trim().toLowerCase()
+    const mediaType = (searchParams.get('type') || 'all').toLowerCase()
+    const statusFilter = (searchParams.get('status') || 'all').toLowerCase()
+    const sort = (searchParams.get('sort') || 'newest').toLowerCase()
+    const isPaginated = searchParams.get('paginate') === 'true'
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10))
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '10', 10)))
+
+    // Fetch user-isolated records
+    let records = investigationStore.listRecords(effectiveUserId)
+
+    // Filter by query
+    if (query) {
+      records = records.filter(
+        (r) =>
+          r.filename.toLowerCase().includes(query) ||
+          r.id.toLowerCase().includes(query) ||
+          (r.assessment && r.assessment.toLowerCase().includes(query)) ||
+          (r.reportId && r.reportId.toLowerCase().includes(query))
+      )
+    }
+
+    // Filter by media type
+    if (mediaType && mediaType !== 'all') {
+      records = records.filter((r) => r.mediaType === mediaType)
+    }
+
+    // Filter by status
+    if (statusFilter && statusFilter !== 'all') {
+      if (statusFilter === 'requires-review') {
+        records = records.filter((r) => r.requiresReview === true)
+      } else if (statusFilter === 'clean') {
+        records = records.filter((r) => r.requiresReview === false)
+      } else {
+        records = records.filter((r) => r.status.toLowerCase() === statusFilter)
+      }
+    }
+
+    // Sort
+    records.sort((a, b) => {
+      if (sort === 'oldest') {
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      }
+      if (sort === 'name-asc') {
+        return a.filename.localeCompare(b.filename)
+      }
+      if (sort === 'name-desc') {
+        return b.filename.localeCompare(a.filename)
+      }
+      // default: newest first
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+
+    const total = records.length
+    const totalPages = Math.ceil(total / limit) || 1
+
+    if (isPaginated) {
+      const startIndex = (page - 1) * limit
+      const paginatedRecords = records.slice(startIndex, startIndex + limit)
+      const stats = investigationStore.getStats(effectiveUserId)
+
+      return NextResponse.json(
+        {
+          records: paginatedRecords,
+          total,
+          page,
+          limit,
+          totalPages,
+          stats,
+        },
+        { status: 200 }
+      )
+    }
+
+    // Standard list for direct consumers
+    return NextResponse.json(records, { status: 200 })
   } catch (err) {
     return createSafeErrorResponse(err, 'Failed to retrieve investigation records.', 500)
   }
@@ -22,6 +100,8 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
+    const { effectiveUserId } = authService.getAuthContext(req)
+
     const contentType = req.headers.get('content-type') || ''
     if (!contentType.includes('multipart/form-data')) {
       return NextResponse.json(
@@ -46,7 +126,7 @@ export async function POST(req: NextRequest) {
     const context = sanitizeContextString(rawContext)
     const primaryFile = allFiles[0]
     const safeName = sanitizeFilename(primaryFile.name)
-    const result = await processAndAnalyzeMedia(primaryFile, safeName, context)
+    const result = await processAndAnalyzeMedia(primaryFile, safeName, context, undefined, effectiveUserId)
 
     return NextResponse.json(
       {

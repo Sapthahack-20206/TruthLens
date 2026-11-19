@@ -5,6 +5,14 @@ export type InvestigationResponse = {
   status?: string
 }
 
+export type SafeUser = {
+  id: string
+  name: string
+  email: string
+  role: 'lead_analyst' | 'analyst' | 'investigator'
+  createdAt: string
+}
+
 export type InvestigationRecord = {
   id: string
   filename: string
@@ -14,6 +22,29 @@ export type InvestigationRecord = {
   assessment?: string
   requiresReview?: boolean
   reportId?: string
+  userId?: string
+  fileSize?: number
+  uncertaintyStatus?: string
+  output?: ForensicResponse | null
+}
+
+export type InvestigationStats = {
+  total: number
+  imageCount: number
+  videoCount: number
+  audioCount: number
+  textCount: number
+  requiresReviewCount: number
+  cleanCount: number
+}
+
+export type PaginatedInvestigations = {
+  records: InvestigationRecord[]
+  total: number
+  page: number
+  limit: number
+  totalPages: number
+  stats: InvestigationStats
 }
 
 export type ForensicFinding = {
@@ -71,7 +102,7 @@ export type ForensicResponse = {
     previewThumbnail?: string
   }[]
   suspiciousRegions?: { id: string; box: [number, number, number, number]; deepfakeProbability: number; label: string; description: string; confidence: number }[]
-  evidenceRelationships?: { source: string; target: string; relationship: string; explanation?: string }[]
+  evidenceRelationships?: { source: string; target: string; relationship: string; explanation?: string; inconsistencyType?: string }[]
   visualizations?: { label: string; url: string }[]
   limitations?: string[]
   processingErrors?: string[]
@@ -175,12 +206,34 @@ export function analyzeCrossModal(files: File[], context = '', onProgress?: (per
   return upload<ForensicResponse>('/api/analyze/cross-modal', appendContext(body, context), onProgress)
 }
 
-export function listInvestigations() {
-  return request<InvestigationRecord[]>('/api/investigations')
+export function listInvestigations(params?: string | {
+  search?: string
+  type?: string
+  status?: string
+  sort?: string
+  page?: number
+  limit?: number
+  paginate?: boolean
+}) {
+  if (!params || typeof params === 'string') {
+    return request<InvestigationRecord[]>('/api/investigations')
+  }
+
+  const query = new URLSearchParams()
+  if (params.search) query.set('search', params.search)
+  if (params.type) query.set('type', params.type)
+  if (params.status) query.set('status', params.status)
+  if (params.sort) query.set('sort', params.sort)
+  if (params.page) query.set('page', String(params.page))
+  if (params.limit) query.set('limit', String(params.limit))
+  if (params.paginate) query.set('paginate', 'true')
+
+  const queryString = query.toString()
+  return request<InvestigationRecord[]>(`/api/investigations${queryString ? `?${queryString}` : ''}`)
 }
 
 export function getInvestigation(id: string) {
-  return request<InvestigationRecord>(`/api/investigations/${encodeURIComponent(id)}`)
+  return request<InvestigationRecord & { output?: ForensicResponse | null }>(`/api/investigations/${encodeURIComponent(id)}`)
 }
 
 export async function getReport(id: string) {
@@ -214,4 +267,31 @@ export function getSafeVisualizationUrl(path: string) {
   } catch {
     return null
   }
+}
+
+// Authentication API methods
+export async function getCurrentUser(): Promise<{ user: SafeUser | null; isGuest: boolean; effectiveUserId: string }> {
+  return request<{ user: SafeUser | null; isGuest: boolean; effectiveUserId: string }>('/api/auth/me')
+}
+
+export async function loginUser(email: string, password: string): Promise<{ user: SafeUser; message: string }> {
+  return request<{ user: SafeUser; message: string }>('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+}
+
+export async function registerUser(name: string, email: string, password: string): Promise<{ user: SafeUser; message: string }> {
+  return request<{ user: SafeUser; message: string }>('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password }),
+  })
+}
+
+export async function logoutUser(): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/auth/logout', {
+    method: 'POST',
+  })
 }

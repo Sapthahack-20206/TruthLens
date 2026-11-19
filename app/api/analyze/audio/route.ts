@@ -3,6 +3,7 @@ import { processAndAnalyzeMedia } from '@/lib/backend-engine/analyzer-service'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { sanitizeContextString } from '@/lib/backend-engine/security-utils'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
+import { authService } from '@/lib/backend-engine/auth-service'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -12,6 +13,8 @@ export async function POST(req: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse
 
   try {
+    const { effectiveUserId } = authService.getAuthContext(req)
+
     const contentType = req.headers.get('content-type') || ''
     if (!contentType.includes('multipart/form-data')) {
       return NextResponse.json(
@@ -32,7 +35,7 @@ export async function POST(req: NextRequest) {
     }
 
     const context = sanitizeContextString(rawContext)
-    const result = await processAndAnalyzeMedia(file, file.name, context, 'audio')
+    const result = await processAndAnalyzeMedia(file, file.name, context, 'audio', effectiveUserId)
 
     return NextResponse.json(result, { status: 200 })
   } catch (err) {
