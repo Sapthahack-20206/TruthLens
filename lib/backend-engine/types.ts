@@ -71,6 +71,12 @@ export interface VideoForensicMetrics {
   facesDetectedCount: number
   averageInterframeDiff: number
   compressionVariance: number
+  maxDeepfakeScore?: number
+  meanDeepfakeScore?: number
+  anomalousFrameCount?: number
+  neuralModelName?: string
+  neuralModelVersion?: string
+  duplicateFramesSkipped?: number
 }
 
 export interface EvidenceRelationship {
@@ -90,6 +96,14 @@ export interface SuspiciousRegion {
   confidence: number
 }
 
+export type UncertaintyStatus =
+  | 'Likely AI-Generated'
+  | 'Likely Manipulated'
+  | 'No Significant Indicators Detected'
+  | 'Inconclusive'
+  | 'Potentially Manipulated'
+  | 'Requires Further Review'
+
 export interface ForensicAnalysisOutput {
   id: string
   investigationId: string
@@ -97,7 +111,11 @@ export interface ForensicAnalysisOutput {
   mediaType?: 'video' | 'audio' | 'image' | 'multimodal'
   status: 'completed' | 'processing' | 'failed'
   assessment: string
-  uncertaintyStatus: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
+  uncertaintyStatus: UncertaintyStatus
+  predictionCategory?: 'Likely AI-Generated' | 'Likely Manipulated' | 'No Significant Indicators Detected' | 'Inconclusive'
+  confidenceScore?: number
+  analyzedFramesCount?: number
+  suspiciousFramesCount?: number
   summary: string
   metadata: MediaMetadata
   findings: DetectionIndicator[]

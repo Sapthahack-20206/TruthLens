@@ -44,7 +44,13 @@ interface EnrichedFinding extends ForensicFinding {
   modelName?: string
 }
 
-export type UncertaintyStatus = 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
+export type UncertaintyStatus =
+  | 'Likely AI-Generated'
+  | 'Likely Manipulated'
+  | 'No Significant Indicators Detected'
+  | 'Inconclusive'
+  | 'Potentially Manipulated'
+  | 'Requires Further Review'
 
 function displayConfidence(value: number | string | undefined): string {
   if (value === undefined || value === null) return 'Not calculated'
@@ -150,26 +156,35 @@ export default function AnalysisResult({
     })
   }, [rawFindings])
 
-  // Derive Uncertainty Status (Strictly: Potentially Manipulated | No Significant Indicators Detected | Requires Further Review)
+  // Derive Uncertainty Status (Strictly: Likely AI-Generated | Likely Manipulated | No Significant Indicators Detected | Inconclusive)
   const uncertaintyStatus: UncertaintyStatus = useMemo(() => {
+    if (result?.predictionCategory) {
+      return result.predictionCategory
+    }
+    if (result?.uncertaintyStatus) {
+      return result.uncertaintyStatus
+    }
     if (result?.assessment) {
       const lower = result.assessment.toLowerCase()
-      if (lower.includes('manipulated') || lower.includes('fake') || lower.includes('synthetic')) {
-        return 'Potentially Manipulated'
+      if (lower.includes('likely ai-generated') || lower.includes('ai-generated') || lower.includes('synthetic face')) {
+        return 'Likely AI-Generated'
       }
-      if (lower.includes('no significant') || lower.includes('no manipulation') || lower.includes('authentic') || lower.includes('clean')) {
+      if (lower.includes('likely manipulated') || lower.includes('manipulated') || lower.includes('deepfake')) {
+        return 'Likely Manipulated'
+      }
+      if (lower.includes('inconclusive') || lower.includes('review') || lower.includes('uncertain')) {
+        return 'Inconclusive'
+      }
+      if (lower.includes('no significant') || lower.includes('clean') || lower.includes('no manipulation')) {
         return 'No Significant Indicators Detected'
-      }
-      if (lower.includes('review') || lower.includes('uncertain') || lower.includes('inconclusive')) {
-        return 'Requires Further Review'
       }
     }
 
     const hasCritical = enrichedFindings.some((f) => f.severity === 'critical' || f.severity === 'high')
-    if (hasCritical) return 'Potentially Manipulated'
-    if (enrichedFindings.length > 0) return 'Requires Further Review'
+    if (hasCritical) return 'Likely Manipulated'
+    if (enrichedFindings.length > 0) return 'Inconclusive'
     return 'No Significant Indicators Detected'
-  }, [enrichedFindings, result?.assessment])
+  }, [enrichedFindings, result?.assessment, result?.predictionCategory, result?.uncertaintyStatus])
 
   // Modality Breakdown Counts
   const videoFindings = useMemo(() => enrichedFindings.filter((f) => f.evidenceType === 'video'), [enrichedFindings])
@@ -387,22 +402,50 @@ export default function AnalysisResult({
       <div className={`uncertainty-assessment-card status-${uncertaintyStatus.toLowerCase().replace(/\s+/g, '-')}`}>
         <div className="uncertainty-status-header">
           <div className="status-badge-group">
-            {uncertaintyStatus === 'Potentially Manipulated' ? (
-              <span className="uncertainty-pill manipulated">
-                <ShieldAlert className="h-4 w-4" /> POTENTIALLY MANIPULATED
+            {uncertaintyStatus === 'Likely AI-Generated' ? (
+              <span className="uncertainty-pill ai-generated bg-rose-950/80 text-rose-300 border border-rose-500/40 px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 shadow-sm">
+                <ShieldAlert className="h-4 w-4 text-rose-400" /> LIKELY AI-GENERATED
+              </span>
+            ) : uncertaintyStatus === 'Likely Manipulated' || uncertaintyStatus === 'Potentially Manipulated' ? (
+              <span className="uncertainty-pill manipulated bg-amber-950/80 text-amber-300 border border-amber-500/40 px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 shadow-sm">
+                <ShieldAlert className="h-4 w-4 text-amber-400" /> LIKELY MANIPULATED
               </span>
             ) : uncertaintyStatus === 'No Significant Indicators Detected' ? (
-              <span className="uncertainty-pill clean">
-                <ShieldCheck className="h-4 w-4" /> NO SIGNIFICANT INDICATORS DETECTED
+              <span className="uncertainty-pill clean bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 shadow-sm">
+                <ShieldCheck className="h-4 w-4 text-emerald-400" /> NO SIGNIFICANT INDICATORS DETECTED
               </span>
             ) : (
-              <span className="uncertainty-pill review">
-                <AlertCircle className="h-4 w-4" /> REQUIRES FURTHER REVIEW
+              <span className="uncertainty-pill review bg-slate-900 text-slate-300 border border-slate-700 px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 shadow-sm">
+                <AlertCircle className="h-4 w-4 text-slate-400" /> INCONCLUSIVE
               </span>
             )}
-            <span className="assessment-badge-text">Automated Pipeline Verdict</span>
+            <span className="assessment-badge-text">Forensic Telemetry Verdict</span>
           </div>
           {result?.status && <span className="response-status">{result.status}</span>}
+        </div>
+
+        {/* Forensic Metrics Overview Strip */}
+        <div className="flex flex-wrap items-center gap-3 my-2 text-xs">
+          {result?.confidenceScore !== undefined && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/40 border border-slate-800 text-slate-300">
+              <span className="text-slate-400">Detection Confidence:</span>
+              <strong className="text-cyan-400 font-mono">{result.confidenceScore}%</strong>
+            </div>
+          )}
+          {(result?.analyzedFramesCount !== undefined || videoTimeline.length > 0 || (result?.videoMetrics?.totalFramesSampled ?? 0) > 0) && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/40 border border-slate-800 text-slate-300">
+              <span className="text-slate-400">Analyzed Frames:</span>
+              <strong className="text-white font-mono">{result?.analyzedFramesCount ?? result?.videoMetrics?.totalFramesSampled ?? videoTimeline.length}</strong>
+            </div>
+          )}
+          {(result?.suspiciousFramesCount !== undefined || timestamps.length > 0) && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/40 border border-slate-800 text-slate-300">
+              <span className="text-slate-400">Suspicious Frames:</span>
+              <strong className={timestamps.length > 0 ? "text-amber-400 font-mono" : "text-emerald-400 font-mono"}>
+                {result?.suspiciousFramesCount ?? timestamps.length}
+              </strong>
+            </div>
+          )}
         </div>
 
         {result?.assessment && (

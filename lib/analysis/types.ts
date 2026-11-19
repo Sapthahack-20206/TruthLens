@@ -132,6 +132,17 @@ export interface ForensicResponse {
   visualizations: ForensicVisualization[]
   timelineSegments?: TimelineSegment[]
   sampledFrames?: SampledFrameInfo[]
+  videoMetrics?: {
+    totalFramesSampled: number
+    facesDetectedCount: number
+    averageInterframeDiff: number
+    compressionVariance: number
+    maxDeepfakeScore?: number
+    meanDeepfakeScore?: number
+    neuralModelName?: string
+    neuralModelVersion?: string
+    duplicateFramesSkipped?: number
+  }
   limitations: string[]
   errors: string[]
   createdAt: string

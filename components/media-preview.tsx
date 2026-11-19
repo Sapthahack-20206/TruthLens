@@ -421,6 +421,7 @@ function VideoEvidencePlayer({ file, response }: { file: File; response?: unknow
   const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(
     null
   )
+  const [videoError, setVideoError] = useState<string | null>(null)
 
   const suspiciousTimestamps = useMemo(() => {
     if (response && typeof response === 'object' && 'suspiciousTimestamps' in response) {
@@ -492,16 +493,25 @@ function VideoEvidencePlayer({ file, response }: { file: File; response?: unknow
   return (
     <div className="video-player-container">
       <div className="video-viewport">
-        {url ? (
+        {videoError ? (
+          <div className="viewport-loading text-red-400 p-4 flex flex-col items-center justify-center gap-2">
+            <span className="font-semibold">Video Stream Decoding Error</span>
+            <span className="text-xs text-slate-400 text-center max-w-sm">{videoError}</span>
+          </div>
+        ) : url ? (
           <video
             ref={videoRef}
             src={url}
             className="evidence-video-element"
             playsInline
+            onError={() => {
+              setVideoError('Unable to decode video container stream. The file may be corrupted, truncated, or encoded in an unsupported codec.')
+            }}
             onTimeUpdate={() => {
               if (videoRef.current) setCurrentTime(videoRef.current.currentTime)
             }}
             onLoadedMetadata={() => {
+              setVideoError(null)
               if (videoRef.current) {
                 setDuration(videoRef.current.duration)
                 setVideoDimensions({
@@ -663,6 +673,12 @@ function VideoEvidencePlayer({ file, response }: { file: File; response?: unknow
         <div className="meta-item">
           <span className="meta-key">Duration:</span>
           <span className="meta-val">{duration ? `${duration.toFixed(2)}s` : 'Reading…'}</span>
+        </div>
+        <div className="meta-item">
+          <span className="meta-key">Frame Rate:</span>
+          <span className="meta-val">
+            {(response as any)?.metadata?.fps ? `${(response as any).metadata.fps} FPS` : '24–30 FPS (Auto)'}
+          </span>
         </div>
         <div className="meta-item">
           <span className="meta-key">Format:</span>

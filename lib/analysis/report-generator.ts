@@ -33,6 +33,20 @@ export function generateForensicPdfReport(response: ForensicResponse): Buffer {
   }
   lines.push('')
 
+  if (response.videoMetrics) {
+    lines.push('VIDEO FRAME EXTRACTION & DETECTION METRICS:')
+    lines.push(`  - Total Frames Sampled:     ${response.videoMetrics.totalFramesSampled}`)
+    lines.push(`  - Faces Tracked:            ${response.videoMetrics.facesDetectedCount}`)
+    lines.push(`  - Average Inter-frame Diff: ${response.videoMetrics.averageInterframeDiff}`)
+    lines.push(`  - Compression Variance:     ${response.videoMetrics.compressionVariance}`)
+    if (response.videoMetrics.neuralModelName) {
+      lines.push(`  - Deepfake Model Engine:    ${response.videoMetrics.neuralModelName} (${response.videoMetrics.neuralModelVersion || 'quantized'})`)
+      lines.push(`  - Peak Deepfake Score:      ${Math.round((response.videoMetrics.maxDeepfakeScore || 0) * 100)}%`)
+      lines.push(`  - Mean Deepfake Score:      ${Math.round((response.videoMetrics.meanDeepfakeScore || 0) * 100)}%`)
+    }
+    lines.push('')
+  }
+
   if (response.findings && response.findings.length > 0) {
     lines.push('FORENSIC FINDINGS:')
     for (const f of response.findings) {
@@ -67,16 +81,13 @@ export function generateForensicPdfReport(response: ForensicResponse): Buffer {
   lines.push('legal proof of authenticity or synthetic manipulation.')
   lines.push('======================================================================')
 
-  // Build PDF text stream
-  let streamText = 'BT\n/F1 9 Tf\n36 750 Td\n13 TL\n'
-  for (const line of lines) {
-    // Truncate overly long lines to fit page width
-    const safeLine = escapePdfText(line.length > 95 ? line.slice(0, 92) + '...' : line)
-    streamText += `(${safeLine}) '\n`
+  // Chunk lines into pages (up to 48 lines per page)
+  const LINES_PER_PAGE = 48
+  const pageChunks: string[][] = []
+  for (let i = 0; i < lines.length; i += LINES_PER_PAGE) {
+    pageChunks.push(lines.slice(i, i + LINES_PER_PAGE))
   }
-  streamText += 'ET\n'
-
-  const streamBuffer = Buffer.from(streamText, 'utf-8')
+  if (pageChunks.length === 0) pageChunks.push([''])
 
   // PDF objects
   const objects: string[] = []
@@ -98,19 +109,40 @@ export function generateForensicPdfReport(response: ForensicResponse): Buffer {
   // 1: Catalog
   addObject('<< /Type /Catalog /Pages 2 0 R >>')
 
-  // 2: Pages
-  addObject('<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
+  // Build page object references (e.g. 4 0 R, 6 0 R, ...)
+  const pageObjectRefs: string[] = []
+  for (let p = 0; p < pageChunks.length; p++) {
+    const pageObjNum = 4 + p * 2
+    pageObjectRefs.push(`${pageObjNum} 0 R`)
+  }
 
-  // 3: Page
-  addObject('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>')
+  // 2: Pages container
+  addObject(`<< /Type /Pages /Kids [${pageObjectRefs.join(' ')}] /Count ${pageChunks.length} >>`)
 
-  // 4: Content stream
-  addObject(`<< /Length ${streamBuffer.length} >>\nstream\n${streamText}endstream`)
-
-  // 5: Font (Courier standard 14 font)
+  // 3: Font (Courier standard Type1 font)
   addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>')
 
-  // xref
+  // Add each Page and Content Stream pair
+  for (let p = 0; p < pageChunks.length; p++) {
+    const chunk = pageChunks[p]
+    let streamText = 'BT\n/F1 9 Tf\n36 750 Td\n13 TL\n'
+    for (const line of chunk) {
+      const safeLine = escapePdfText(line.length > 95 ? line.slice(0, 92) + '...' : line)
+      streamText += `(${safeLine}) '\n`
+    }
+    streamText += 'ET\n'
+
+    const streamBuffer = Buffer.from(streamText, 'utf-8')
+    const streamObjNum = 4 + p * 2 + 1
+
+    // Page object
+    addObject(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${streamObjNum} 0 R /Resources << /Font << /F1 3 0 R >> >> >>`)
+
+    // Content stream object
+    addObject(`<< /Length ${streamBuffer.length} >>\nstream\n${streamText}endstream`)
+  }
+
+  // xref table
   const xrefOffset = currentOffset
   let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
   for (const off of offsets) {

@@ -7,8 +7,17 @@ export interface ForensicReportData {
   mediaType: string
   fileSize?: string
   duration?: string
-  overallStatus: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
+  hashSha256?: string
+  overallStatus:
+    | 'Likely AI-Generated'
+    | 'Likely Manipulated'
+    | 'No Significant Indicators Detected'
+    | 'Inconclusive'
+    | 'Potentially Manipulated'
+    | 'Requires Further Review'
   confidenceScore?: number | string
+  analyzedFramesCount?: number
+  suspiciousFramesCount?: number
   summary: string
   videoFindings: Array<{ title: string; timestamp?: string; severity: string; confidence?: number | string; explanation: string; humanReview?: string }>
   audioFindings: Array<{ title: string; timestamp?: string; severity: string; confidence?: number | string; explanation: string; humanReview?: string }>
@@ -96,10 +105,18 @@ export function generateForensicPdfBlob(data: ForensicReportData): Blob {
     statusBg = '0.94 0.96 0.98'
     statusStroke = '0.2 0.5 0.7'
     statusTextRg = '0.1 0.35 0.55'
-  } else if (data.overallStatus === 'Requires Further Review') {
+  } else if (data.overallStatus === 'Requires Further Review' || data.overallStatus === 'Inconclusive') {
+    statusBg = '0.95 0.95 0.95'
+    statusStroke = '0.5 0.5 0.5'
+    statusTextRg = '0.3 0.3 0.3'
+  } else if (data.overallStatus === 'Likely Manipulated') {
     statusBg = '0.98 0.96 0.92'
     statusStroke = '0.8 0.55 0.15'
     statusTextRg = '0.65 0.4 0.05'
+  } else if (data.overallStatus === 'Likely AI-Generated') {
+    statusBg = '0.98 0.92 0.92'
+    statusStroke = '0.85 0.2 0.2'
+    statusTextRg = '0.75 0.1 0.1'
   }
 
   currentCommands.push(

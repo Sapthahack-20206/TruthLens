@@ -40,6 +40,7 @@ export interface ModelVideoResult {
   modelName: string
   modelVersion: string
   totalFramesAnalyzed: number
+  duplicateFramesSkipped?: number
   nativeFps: number
   durationSec: number
   maxDeepfakeScore: number
@@ -241,14 +242,15 @@ export class ModelService {
     }
 
     // 2. Local Python Execution Fallback
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
+    if (this.aiServiceUrl && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
       logger.error('CRITICAL: Remote AI image inference failed or is not configured in production. Local Python fallback is disabled.')
       return null
     }
 
     try {
+      const pyCmd = process.env.PYTHON_PATH || 'python'
       const { stdout } = await execFileAsync(
-        'python',
+        pyCmd,
         [this.scriptPath, '--action', 'analyze_image', '--input', imagePath, '--output_dir', this.outputDir],
         { timeout: 30000, windowsHide: true }
       )
@@ -300,14 +302,15 @@ export class ModelService {
     }
 
     // 2. Local Python Execution Fallback
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
+    if (this.aiServiceUrl && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_AI_FALLBACK !== 'true') {
       logger.error('CRITICAL: Remote AI video inference failed or is not configured in production. Local Python fallback is disabled.')
       return null
     }
 
     try {
+      const pyCmd = process.env.PYTHON_PATH || 'python'
       const { stdout } = await execFileAsync(
-        'python',
+        pyCmd,
         [
           this.scriptPath,
           '--action',

@@ -361,7 +361,66 @@ export async function analyzeVideoEvidence(
 
       // Add flagged timestamps from neural model
       if (videoModelRes.suspiciousTimestamps) {
-        suspiciousTimestamps.push(...videoModelRes.suspiciousTimestamps)
+        for (const st of videoModelRes.suspiciousTimestamps) {
+          if (!suspiciousTimestamps.some((existing) => Math.abs(existing.seconds - st.seconds) < 0.5)) {
+            suspiciousTimestamps.push(st)
+          }
+        }
+      }
+
+      // Merge neural inference findings into video timeline keyframes
+      if (videoTimeline && videoTimeline.length > 0 && videoModelRes.anomalousFrames?.length) {
+        for (const anom of videoModelRes.anomalousFrames) {
+          const match = videoTimeline.find((f) => Math.abs(f.seconds - anom.seconds) < 0.6)
+          if (match) {
+            match.isSuspicious = true
+            const scorePct = Math.round(anom.score * 100)
+            if (!match.indicators.some((ind) => ind.includes('ViT') || ind.includes('Neural'))) {
+              match.indicators.push(`ViT Deepfake Probability: ${scorePct}%`)
+            }
+            if (anom.score >= 0.75) {
+              match.severity = 'critical'
+            } else if (anom.score >= 0.50 && match.severity !== 'critical') {
+              match.severity = 'high'
+            }
+          }
+        }
+      } else if (!videoTimeline && videoModelRes.anomalousFrames?.length) {
+        videoTimeline = videoModelRes.anomalousFrames.map((anom, idx) => ({
+          frameNumber: idx + 1,
+          seconds: anom.seconds,
+          timestamp: anom.timestamp,
+          isSuspicious: anom.score >= 0.5,
+          anomalyCount: anom.score >= 0.5 ? 1 : 0,
+          faceDetected: anom.facesCount > 0,
+          severity: anom.score >= 0.75 ? 'critical' : anom.score >= 0.5 ? 'high' : 'info',
+          indicators: anom.score >= 0.5 ? [`ViT Deepfake Probability: ${Math.round(anom.score * 100)}%`] : [],
+        }))
+      }
+
+      // Update forensic metrics with neural evaluation results
+      if (videoMetrics) {
+        videoMetrics.maxDeepfakeScore = videoModelRes.maxDeepfakeScore
+        videoMetrics.meanDeepfakeScore = videoModelRes.meanDeepfakeScore
+        videoMetrics.anomalousFrameCount = videoModelRes.anomalousFrameCount
+        videoMetrics.neuralModelName = videoModelRes.modelName
+        videoMetrics.neuralModelVersion = videoModelRes.modelVersion
+        if (videoModelRes.duplicateFramesSkipped !== undefined) {
+          videoMetrics.duplicateFramesSkipped = videoModelRes.duplicateFramesSkipped
+        }
+      } else {
+        videoMetrics = {
+          totalFramesSampled: videoModelRes.totalFramesAnalyzed,
+          facesDetectedCount: videoModelRes.anomalousFrames.reduce((acc, f) => acc + (f.facesCount > 0 ? 1 : 0), 0),
+          averageInterframeDiff: 0,
+          compressionVariance: 0,
+          maxDeepfakeScore: videoModelRes.maxDeepfakeScore,
+          meanDeepfakeScore: videoModelRes.meanDeepfakeScore,
+          anomalousFrameCount: videoModelRes.anomalousFrameCount,
+          neuralModelName: videoModelRes.modelName,
+          neuralModelVersion: videoModelRes.modelVersion,
+          duplicateFramesSkipped: videoModelRes.duplicateFramesSkipped,
+        }
       }
 
       // Add visualizations

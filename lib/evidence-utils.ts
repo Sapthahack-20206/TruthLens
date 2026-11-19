@@ -13,10 +13,10 @@ export interface EvidenceValidationResult {
 
 export const EVIDENCE_CONSTRAINTS = {
   video: {
-    extensions: ['mp4', 'mov', 'webm'],
-    mimeTypes: ['video/mp4', 'video/quicktime', 'video/webm'],
+    extensions: ['mp4', 'mov', 'avi', 'webm'],
+    mimeTypes: ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi', 'video/webm'],
     maxBytes: 100 * 1024 * 1024, // 100 MB
-    label: 'Video (MP4, MOV, WEBM)',
+    label: 'Video (MP4, MOV, AVI, WEBM)',
   },
   audio: {
     extensions: ['mp3', 'wav', 'm4a'],
@@ -94,7 +94,7 @@ export function validateEvidenceFile(
     const allowedLabels = allowedCategories
       .map((cat) => {
         if (cat === 'image') return 'Images (JPG, JPEG, PNG, WEBP)'
-        if (cat === 'video') return 'Video (MP4, MOV, WEBM)'
+        if (cat === 'video') return 'Video (MP4, MOV, AVI, WEBM)'
         if (cat === 'audio') return 'Audio (MP3, WAV, M4A)'
         if (cat === 'text') return 'Text (TXT)'
         return cat

@@ -264,7 +264,7 @@ export class DatabaseService {
     if (this.client) {
       try {
         const uncertainty = record.uncertaintyStatus &&
-          ['Potentially Manipulated', 'No Significant Indicators Detected', 'Requires Further Review'].includes(record.uncertaintyStatus)
+          ['Likely AI-Generated', 'Likely Manipulated', 'No Significant Indicators Detected', 'Inconclusive', 'Potentially Manipulated', 'Requires Further Review'].includes(record.uncertaintyStatus)
             ? record.uncertaintyStatus
             : record.requiresReview ? 'Requires Further Review' : 'No Significant Indicators Detected'
 

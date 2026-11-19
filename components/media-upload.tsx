@@ -265,7 +265,7 @@ export default function MediaUpload({
             <div className="format-tags-list">
               {allowedCategories.includes('video') && (
                 <span className="format-tag">
-                  <FileVideo className="tag-icon" /> Video (MP4, MOV, WEBM)
+                  <FileVideo className="tag-icon" /> Video (MP4, MOV, AVI, WEBM)
                 </span>
               )}
               {allowedCategories.includes('audio') && (

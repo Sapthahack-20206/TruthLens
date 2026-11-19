@@ -83,7 +83,17 @@ export type ForensicResponse = {
   mediaType?: 'video' | 'audio' | 'image' | 'multimodal'
   status?: string
   assessment?: string
-  uncertaintyStatus?: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
+  uncertaintyStatus?:
+    | 'Likely AI-Generated'
+    | 'Likely Manipulated'
+    | 'No Significant Indicators Detected'
+    | 'Inconclusive'
+    | 'Potentially Manipulated'
+    | 'Requires Further Review'
+  predictionCategory?: 'Likely AI-Generated' | 'Likely Manipulated' | 'No Significant Indicators Detected' | 'Inconclusive'
+  confidenceScore?: number
+  analyzedFramesCount?: number
+  suspiciousFramesCount?: number
   summary?: string
   metadata?: Record<string, string | number | boolean | null>
   findings?: ForensicFinding[]

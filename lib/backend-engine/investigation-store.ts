@@ -18,6 +18,7 @@ export interface InvestigationRecord {
   userId?: string
   fileSize?: number
   uncertaintyStatus?: string
+  predictionCategory?: string
   storageKey?: string
 }
 

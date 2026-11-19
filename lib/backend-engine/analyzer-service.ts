@@ -38,7 +38,11 @@ export async function processAndAnalyzeMedia(
         reportId,
         status: 'failed',
         assessment: 'Analysis aborted due to validation failure.',
-        uncertaintyStatus: 'Requires Further Review',
+        uncertaintyStatus: 'Inconclusive',
+        predictionCategory: 'Inconclusive',
+        confidenceScore: 0,
+        analyzedFramesCount: 0,
+        suspiciousFramesCount: 0,
         summary: `Validation failed: ${validationErrors.join(' ')}`,
         metadata,
         findings: [],
@@ -61,7 +65,8 @@ export async function processAndAnalyzeMedia(
         requiresReview: true,
         reportId,
         userId,
-        uncertaintyStatus: 'Requires Further Review',
+        uncertaintyStatus: 'Inconclusive',
+        predictionCategory: 'Inconclusive',
       })
       return failedOutput
     }
@@ -169,23 +174,48 @@ export async function processAndAnalyzeMedia(
       }
     }
 
-    // 4. Determine Final Veracity Assessment (Strictly: Potentially Manipulated | No Significant Indicators Detected | Requires Further Review)
+    // 4. Determine Final Veracity Assessment (4 Required Categories: Likely AI-Generated | Likely Manipulated | No Significant Indicators Detected | Inconclusive)
+    const hasCriticalNeural = allIndicators.some((i) => !i.isHeuristic && (i.severity === 'critical' || (typeof i.confidence === 'number' && i.confidence >= 70)))
     const hasCriticalOrHigh = allIndicators.some((i) => i.severity === 'critical' || i.severity === 'high')
-    let uncertaintyStatus: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review' = 'Requires Further Review'
-    let assessment = ''
+    const hasModerate = allIndicators.some((i) => i.severity === 'moderate')
+    const maxDeepfakeScore = videoMetrics?.maxDeepfakeScore ?? 0
 
-    if (hasCriticalOrHigh) {
-      uncertaintyStatus = 'Potentially Manipulated'
-      assessment = 'Potential manipulation indicators detected. Human examiner review required.'
-    } else if (allIndicators.some((i) => i.severity === 'moderate')) {
-      uncertaintyStatus = 'Requires Further Review'
-      assessment = 'Inconclusive signals flagged during analysis. Requires further review.'
+    let uncertaintyStatus: import('./types').UncertaintyStatus = 'Inconclusive'
+    let predictionCategory: 'Likely AI-Generated' | 'Likely Manipulated' | 'No Significant Indicators Detected' | 'Inconclusive' = 'Inconclusive'
+    let assessment = ''
+    let confidenceScore = 0
+
+    if (hasCriticalNeural || maxDeepfakeScore >= 0.70) {
+      uncertaintyStatus = 'Likely AI-Generated'
+      predictionCategory = 'Likely AI-Generated'
+      confidenceScore = Math.max(Math.round(maxDeepfakeScore * 100), 85)
+      assessment = 'Video exhibits strong neural Vision Transformer deepfake signatures and synthetic facial characteristics. Likely AI-Generated.'
+    } else if (hasCriticalOrHigh || maxDeepfakeScore >= 0.50) {
+      uncertaintyStatus = 'Likely Manipulated'
+      predictionCategory = 'Likely Manipulated'
+      confidenceScore = Math.max(Math.round(maxDeepfakeScore * 100), 72)
+      assessment = 'Video exhibits biometric boundary seams, temporal displacement, or facial manipulation indicators. Likely Manipulated.'
+    } else if (allErrors.length > 0 || (detectedModality === 'video' && (!videoTimeline || videoTimeline.length < 2))) {
+      uncertaintyStatus = 'Inconclusive'
+      predictionCategory = 'Inconclusive'
+      confidenceScore = 40
+      assessment = 'Insufficient forensic frame evidence or stream parsing limits prevent definitive classification. Inconclusive.'
+    } else if (hasModerate) {
+      uncertaintyStatus = 'Inconclusive'
+      predictionCategory = 'Inconclusive'
+      confidenceScore = 55
+      assessment = 'Low-to-moderate heuristic signals flagged without conclusive neural confirmation. Human examiner verification required.'
     } else {
       uncertaintyStatus = 'No Significant Indicators Detected'
-      assessment = 'No significant structural or heuristic manipulation indicators detected.'
+      predictionCategory = 'No Significant Indicators Detected'
+      confidenceScore = 12
+      assessment = 'No significant structural, biometric, or neural deepfake indicators detected across sampled frames. Note: Absence of detected indicators is not proof of authenticity.'
     }
 
-    const summary = `Forensic analysis completed on ${metadata.filename} (${metadata.mimeType}, ${(metadata.fileSize / 1024 / 1024).toFixed(2)} MB). Found ${allIndicators.length} analysis indicators across ${detectedModality} stream. Overall verdict: ${uncertaintyStatus}. Note: Absence of detected indicators is not proof of authenticity.`
+    const analyzedFramesCount = videoMetrics?.totalFramesSampled ?? videoTimeline?.length ?? 0
+    const suspiciousFramesCount = videoTimeline?.filter((f) => f.isSuspicious).length ?? allTimestamps.length
+
+    const summary = `Forensic analysis completed on ${metadata.filename} (${metadata.mimeType}, ${(metadata.fileSize / 1024 / 1024).toFixed(2)} MB). Evaluated ${analyzedFramesCount} frames (${suspiciousFramesCount} flagged). Overall verdict: ${predictionCategory} (Confidence: ${confidenceScore}%). Note: Absence of detected indicators is not proof of authenticity.`
 
     const finalOutput: ForensicAnalysisOutput = {
       id: analysisId,
@@ -195,6 +225,10 @@ export async function processAndAnalyzeMedia(
       status: 'completed',
       assessment,
       uncertaintyStatus,
+      predictionCategory,
+      confidenceScore,
+      analyzedFramesCount,
+      suspiciousFramesCount,
       summary,
       metadata,
       findings: allIndicators,

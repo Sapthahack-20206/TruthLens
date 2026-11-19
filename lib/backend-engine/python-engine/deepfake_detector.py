@@ -21,7 +21,11 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 MODELS_DIR = BASE_DIR / "models"
 VIT_MODEL_PATH = MODELS_DIR / "deepfake_vit_quantized.onnx"
-YUNET_MODEL_PATH = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
+YUNET_MODEL_PATH = (
+    MODELS_DIR / "face_detection_yunet_2023mar.onnx"
+    if (MODELS_DIR / "face_detection_yunet_2023mar.onnx").exists()
+    else MODELS_DIR / "face_detection_yunet.onnx"
+)
 
 def eprint(*args, **kwargs):
     """Log to stderr to keep stdout pristine for JSON output."""
@@ -312,6 +316,8 @@ class DeepfakeDetector:
         top_suspicious_frame = None
         top_suspicious_score = -1.0
         top_suspicious_time = ""
+        prev_gray = None
+        duplicate_frames_skipped = 0
 
         while cap.isOpened() and analyzed_count < max_frames:
             ret, frame_bgr = cap.read()
@@ -319,6 +325,17 @@ class DeepfakeDetector:
                 break
 
             if curr_frame_idx % step == 0:
+                h, w, _ = frame_bgr.shape
+                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                if prev_gray is not None and prev_gray.shape == gray.shape:
+                    diff = float(np.mean(np.abs(gray.astype(np.float32) - prev_gray.astype(np.float32))))
+                    if diff < 1.0:
+                        # Avoid unnecessary processing of identical or duplicate frames
+                        duplicate_frames_skipped += 1
+                        curr_frame_idx += 1
+                        continue
+                prev_gray = gray
+
                 analyzed_count += 1
                 timestamp_sec = curr_frame_idx / native_fps
                 mins = int(timestamp_sec // 60)
@@ -326,7 +343,6 @@ class DeepfakeDetector:
                 ms = int((timestamp_sec % 1) * 100)
                 timecode = f"{mins:02d}:{secs:02d}.{ms:02d}"
 
-                h, w, _ = frame_bgr.shape
                 img_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
                 # Predict full frame
@@ -418,6 +434,7 @@ class DeepfakeDetector:
             "modelName": "ViT-Deepfake-Detection-v1",
             "modelVersion": "Exp-02-21",
             "totalFramesAnalyzed": analyzed_count,
+            "duplicateFramesSkipped": duplicate_frames_skipped,
             "nativeFps": round(native_fps, 2),
             "durationSec": round(duration_sec, 2),
             "maxDeepfakeScore": round(max_df_prob, 4),
