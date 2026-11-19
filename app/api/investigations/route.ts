@@ -6,8 +6,10 @@ import { sanitizeContextString, sanitizeFilename } from '@/lib/backend-engine/se
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
 import { authService } from '@/lib/backend-engine/auth-service'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(req: NextRequest) {
-  const rateLimitResponse = enforceRateLimit(req, 'read')
+  const rateLimitResponse = await enforceRateLimit(req, 'read')
   if (rateLimitResponse) return rateLimitResponse
 
   try {
@@ -99,7 +101,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const rateLimitResponse = enforceRateLimit(req, 'analyze')
+  const rateLimitResponse = await enforceRateLimit(req, 'analyze')
   if (rateLimitResponse) return rateLimitResponse
 
   try {

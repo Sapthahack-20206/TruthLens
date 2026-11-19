@@ -4,8 +4,10 @@ import { investigationStore } from '@/lib/backend-engine/investigation-store'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: NextRequest) {
-  const rateLimitResponse = enforceRateLimit(req, 'read')
+  const rateLimitResponse = await enforceRateLimit(req, 'auth')
   if (rateLimitResponse) return rateLimitResponse
 
   try {

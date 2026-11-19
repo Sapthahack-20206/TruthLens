@@ -187,19 +187,131 @@ export function createInvestigation(files: File[], context = '', onProgress?: (p
   return upload<InvestigationResponse>('/api/investigations', appendContext(body, context), onProgress)
 }
 
+export interface PresignedUploadResponse {
+  uploadUrl: string
+  storageKey: string
+  method: 'PUT' | 'POST'
+  headers: Record<string, string>
+  expiresAt: string
+  maxSizeBytes: number
+}
+
+export async function getPresignedUploadUrl(
+  filename: string,
+  mimeType: string,
+  fileSize: number,
+  category?: 'video' | 'audio' | 'image' | 'multimodal'
+): Promise<PresignedUploadResponse> {
+  return request<PresignedUploadResponse>('/api/upload/presigned', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, mimeType, fileSize, category }),
+  })
+}
+
+export function uploadDirectToStorage(
+  file: File,
+  presigned: PresignedUploadResponse,
+  onProgress?: (percentage: number) => void
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const targetUrl = presigned.uploadUrl.startsWith('http')
+      ? presigned.uploadUrl
+      : `${API_BASE}${presigned.uploadUrl}`
+
+    xhr.open(presigned.method || 'PUT', targetUrl)
+    if (presigned.headers) {
+      for (const [k, v] of Object.entries(presigned.headers)) {
+        xhr.setRequestHeader(k, v)
+      }
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress?.(Math.round((event.loaded / event.total) * 100))
+      }
+    }
+
+    xhr.onerror = () => reject(new Error('Cloud storage upload failed. Please check network connection.'))
+    xhr.onabort = () => reject(new Error('Upload was cancelled.'))
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(presigned.storageKey)
+      } else {
+        reject(new Error(`Storage service rejected upload with HTTP ${xhr.status}.`))
+      }
+    }
+
+    xhr.send(file)
+  })
+}
+
 export function analyzeImage(file: File, context = '', onProgress?: (percentage: number) => void) {
   const body = new FormData()
   body.append('file', file)
   return upload<ForensicResponse>('/api/analyze/image', appendContext(body, context), onProgress)
 }
 
-export function analyzeVideo(file: File, context = '', onProgress?: (percentage: number) => void) {
+export async function analyzeVideo(file: File, context = '', onProgress?: (percentage: number) => void): Promise<ForensicResponse> {
+  // If file size exceeds 4MB, prefer direct-to-cloud presigned upload
+  if (file.size > 4 * 1024 * 1024) {
+    try {
+      const presigned = await getPresignedUploadUrl(file.name, file.type || 'video/mp4', file.size, 'video')
+      const storageKey = await uploadDirectToStorage(file, presigned, (p) => {
+        onProgress?.(Math.round(p * 0.8))
+      })
+      onProgress?.(85)
+      const result = await request<ForensicResponse>('/api/analyze/video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storageKey,
+          filename: file.name,
+          mimeType: file.type || 'video/mp4',
+          fileSize: file.size,
+          context,
+        }),
+      })
+      onProgress?.(100)
+      return result
+    } catch {
+      // Fallback to direct multipart upload if presigned upload fails
+    }
+  }
+
   const body = new FormData()
   body.append('file', file)
   return upload<ForensicResponse>('/api/analyze/video', appendContext(body, context), onProgress)
 }
 
-export function analyzeAudio(file: File, context = '', onProgress?: (percentage: number) => void) {
+export async function analyzeAudio(file: File, context = '', onProgress?: (percentage: number) => void): Promise<ForensicResponse> {
+  // If file size exceeds 4MB, prefer direct-to-cloud presigned upload
+  if (file.size > 4 * 1024 * 1024) {
+    try {
+      const presigned = await getPresignedUploadUrl(file.name, file.type || 'audio/wav', file.size, 'audio')
+      const storageKey = await uploadDirectToStorage(file, presigned, (p) => {
+        onProgress?.(Math.round(p * 0.8))
+      })
+      onProgress?.(85)
+      const result = await request<ForensicResponse>('/api/analyze/audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storageKey,
+          filename: file.name,
+          mimeType: file.type || 'audio/wav',
+          fileSize: file.size,
+          context,
+        }),
+      })
+      onProgress?.(100)
+      return result
+    } catch {
+      // Fallback to direct multipart upload if presigned upload fails
+    }
+  }
+
   const body = new FormData()
   body.append('file', file)
   return upload<ForensicResponse>('/api/analyze/audio', appendContext(body, context), onProgress)

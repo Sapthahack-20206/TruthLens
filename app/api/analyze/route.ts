@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { processAndAnalyzeMedia } from '@/lib/backend-engine/analyzer-service'
+import { processAndAnalyzeMedia, processAndAnalyzeStorageKey } from '@/lib/backend-engine/analyzer-service'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
-import { sanitizeContextString } from '@/lib/backend-engine/security-utils'
+import { sanitizeContextString, sanitizeFilename } from '@/lib/backend-engine/security-utils'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
 import { authService } from '@/lib/backend-engine/auth-service'
 
@@ -10,19 +10,25 @@ export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   // 1. Enforce Rate Limiting (Prevents Resource Exhaustion / DoS)
-  const rateLimitResponse = enforceRateLimit(req, 'analyze')
+  const rateLimitResponse = await enforceRateLimit(req, 'analyze')
   if (rateLimitResponse) return rateLimitResponse
 
   try {
     const authContext = authService.getAuthContext(req)
+    const { effectiveUserId } = authContext
     const contentType = req.headers.get('content-type') || ''
     let file: File | null = null
     let rawContext = ''
+    let storageKey = ''
+    let filename = ''
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData()
       file = (formData.get('file') || formData.get('files')) as File | null
       rawContext = (formData.get('context') as string) || ''
+      if (file) {
+        filename = sanitizeFilename(file.name)
+      }
     } else if (contentType.includes('application/json')) {
       const json = await req.json().catch(() => null)
       if (!json || typeof json !== 'object') {
@@ -32,32 +38,49 @@ export async function POST(req: NextRequest) {
         )
       }
       rawContext = typeof json.context === 'string' ? json.context : ''
-      if (json.fileUrl) {
+      storageKey = typeof json.storageKey === 'string' ? json.storageKey : ''
+      filename = typeof json.filename === 'string' ? sanitizeFilename(json.filename) : 'evidence.bin'
+
+      if (!storageKey && !json.fileUrl) {
         return NextResponse.json(
-          { detail: 'Direct URL ingestion requires connected storage worker.' },
+          { detail: 'Missing required "storageKey" reference in JSON payload.' },
           { status: 400 }
         )
       }
     } else {
       return NextResponse.json(
-        { detail: 'Unsupported Content-Type header. Expected multipart/form-data.' },
+        { detail: 'Unsupported Content-Type header. Expected multipart/form-data or application/json.' },
         { status: 415 }
       )
     }
 
+    const context = sanitizeContextString(rawContext)
+
+    // A. Storage Reference Processing (Direct-to-Cloud Uploads)
+    if (storageKey) {
+      const result = await processAndAnalyzeStorageKey(storageKey, filename, context, undefined, effectiveUserId)
+      const response = NextResponse.json(result, { status: 200 })
+      return authService.attachGuestCookie(response, authContext)
+    }
+
+    // B. Direct Multipart File Processing
     if (!file) {
       return NextResponse.json(
-        { detail: 'No evidence file provided in the request body.' },
+        { detail: 'No evidence file or storage reference provided.' },
         { status: 400 }
       )
     }
 
-    const context = sanitizeContextString(rawContext)
-    const result = await processAndAnalyzeMedia(file, file.name, context, undefined, authContext.effectiveUserId)
-
+    const result = await processAndAnalyzeMedia(file, filename, context, undefined, effectiveUserId)
     const response = NextResponse.json(result, { status: 200 })
     return authService.attachGuestCookie(response, authContext)
   } catch (err) {
+    if (err instanceof Error && err.message.includes('Access denied')) {
+      return NextResponse.json(
+        { detail: err.message },
+        { status: 403 }
+      )
+    }
     return createSafeErrorResponse(err, 'The media file could not be analyzed due to processing failure.', 500)
   }
 }

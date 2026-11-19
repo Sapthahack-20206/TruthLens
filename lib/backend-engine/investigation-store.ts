@@ -18,6 +18,7 @@ export interface InvestigationRecord {
   userId?: string
   fileSize?: number
   uncertaintyStatus?: string
+  storageKey?: string
 }
 
 export interface UserInvestigationStats {
@@ -185,6 +186,27 @@ class InvestigationStore {
     await databaseService.saveInvestigation(record)
   }
 
+  getRawRecord(id: string): InvestigationRecord | undefined {
+    const validId = validateIdParam(id)
+    if (!validId) return undefined
+    let record = this.records.get(validId)
+    if (!record) {
+      record = Array.from(this.records.values()).find((r) => r.reportId === validId)
+    }
+    return record
+  }
+
+  getRawOutput(id: string): ForensicAnalysisOutput | undefined {
+    const validId = validateIdParam(id)
+    if (!validId) return undefined
+    let output = this.outputs.get(validId)
+    if (!output) {
+      output = Array.from(this.outputs.values()).find((o) => o.reportId === validId || o.investigationId === validId)
+    }
+    return output
+  }
+  }
+
   getRecord(id: string, userId?: string): InvestigationRecord | undefined {
     const validId = validateIdParam(id)
     if (!validId) return undefined
@@ -195,13 +217,15 @@ class InvestigationStore {
     }
     if (!record) return undefined
 
-    // User access control:
-    // If userId is provided, ensure record belongs to this user or is the default baseline sample
-    if (userId) {
-      if (record.id === 'inv-baseline-sample') {
-        return record // Baseline sample is accessible for baseline verification
-      }
-      if (!record.userId || record.userId !== userId) {
+    // Public baseline sample is viewable for demonstration
+    if (record.id === 'inv-baseline-sample' || record.reportId === 'rep-baseline-001') {
+      return record
+    }
+
+    // Strict user access control:
+    // If the record has an owner, caller MUST provide a matching userId
+    if (record.userId) {
+      if (!userId || record.userId !== userId) {
         return undefined // Unauthorized access to another user's record
       }
     }
@@ -228,18 +252,14 @@ class InvestigationStore {
   listRecords(userId?: string): InvestigationRecord[] {
     const all = Array.from(this.records.values())
 
-    // If userId is provided, filter records by ownership
+    // If userId is provided, filter records strictly by ownership
     const filtered = userId
       ? all.filter((r) => {
-          // If the record was created by this user
           if (r.userId === userId) return true
-          // If the record has no userId (legacy), allow for default analyst
-          if (!r.userId && userId === 'usr-lead-analyst') return true
-          // Baseline sample visible to lead analyst
-          if (r.id === 'inv-baseline-sample' && userId === 'usr-lead-analyst') return true
+          if (r.id === 'inv-baseline-sample' && (userId === 'usr-lead-analyst' || userId.startsWith('guest-'))) return true
           return false
         })
-      : all
+      : all.filter((r) => r.id === 'inv-baseline-sample') // unauthenticated only sees baseline demo
 
     return filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }
@@ -302,14 +322,16 @@ class InvestigationStore {
     }
     if (!output) return undefined
 
-    // Check ownership if userId provided
+    // Public baseline sample is viewable for demonstration
+    if (output.id === 'TL-BASELINE-SAMPLE' || output.reportId === 'rep-baseline-001') {
+      return output
+    }
+
+    // Strict ownership verification:
     const outUser = (output as unknown as { userId?: string }).userId
-    if (userId) {
-      if (output.id === 'TL-BASELINE-SAMPLE') {
-        return output
-      }
-      if (!outUser || outUser !== userId) {
-        return undefined
+    if (outUser) {
+      if (!userId || outUser !== userId) {
+        return undefined // Unauthorized access to another user's output
       }
     }
 

@@ -3,12 +3,15 @@ import { investigationStore } from '@/lib/backend-engine/investigation-store'
 import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { validateIdParam } from '@/lib/backend-engine/security-utils'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
+import { authService } from '@/lib/backend-engine/auth-service'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const rateLimitResponse = enforceRateLimit(req, 'read')
+  const rateLimitResponse = await enforceRateLimit(req, 'read')
   if (rateLimitResponse) return rateLimitResponse
 
   try {
@@ -21,11 +24,33 @@ export async function GET(
       )
     }
 
-    const output = investigationStore.getOutput(validId)
+    const { effectiveUserId } = authService.getAuthContext(req)
+    const isBaseline = validId === 'TL-BASELINE-SAMPLE' || validId === 'inv-baseline-sample' || validId === 'rep-baseline-001'
+
+    // Check existence
+    const unverifiedOutput = investigationStore.getOutput(validId)
+    const unverifiedRecord = investigationStore.getRecord(validId)
+
+    if (!unverifiedOutput && !unverifiedRecord && !isBaseline) {
+      return NextResponse.json(
+        { detail: `Analysis task with ID "${validId}" was not found.` },
+        { status: 404 }
+      )
+    }
+
+    // Ownership check
+    const ownerUserId = (unverifiedOutput as unknown as { userId?: string })?.userId || unverifiedRecord?.userId
+    if (ownerUserId && !isBaseline && ownerUserId !== effectiveUserId) {
+      return NextResponse.json(
+        { detail: 'Forbidden: You do not have permission to view status for this task.' },
+        { status: 403 }
+      )
+    }
+
+    const output = isBaseline ? unverifiedOutput : investigationStore.getOutput(validId, effectiveUserId)
+    const rec = isBaseline ? unverifiedRecord : investigationStore.getRecord(validId, effectiveUserId)
 
     if (!output) {
-      // Check if investigation record exists
-      const rec = investigationStore.getRecord(validId)
       if (rec) {
         return NextResponse.json({
           id: rec.id,

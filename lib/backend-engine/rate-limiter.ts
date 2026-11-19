@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logger } from './logger'
+
+export type RateLimitType = 'analyze' | 'upload' | 'auth' | 'read'
 
 interface RateLimitConfig {
   windowMs: number
@@ -9,20 +12,44 @@ interface ClientRecord {
   timestamps: number[]
 }
 
-const LIMITS: Record<'analyze' | 'read', RateLimitConfig> = {
+const LIMITS: Record<RateLimitType, RateLimitConfig> = {
   analyze: {
     windowMs: 60 * 1000, // 1 minute window
-    maxRequests: 30,     // 30 analysis requests per minute per IP
+    maxRequests: 30,     // 30 media analysis submissions per minute
+  },
+  upload: {
+    windowMs: 60 * 1000, // 1 minute window
+    maxRequests: 20,     // 20 presigned uploads per minute
+  },
+  auth: {
+    windowMs: 60 * 1000, // 1 minute window
+    maxRequests: 10,     // 10 authentication attempts per minute (brute-force defense)
   },
   read: {
     windowMs: 60 * 1000, // 1 minute window
-    maxRequests: 120,    // 120 status/list requests per minute per IP
+    maxRequests: 120,    // 120 status/list requests per minute
   },
 }
 
-class InMemoryRateLimiter {
-  private clientStore: Map<string, ClientRecord> = new Map()
+export interface RateLimitResult {
+  allowed: boolean
+  remaining: number
+  limit: number
+  retryAfterSeconds: number
+}
+
+/**
+ * Distributed rate limiter with Upstash Redis REST support and in-memory sliding window fallback.
+ */
+class RateLimiter {
+  private inMemoryStore: Map<string, ClientRecord> = new Map()
   private lastCleanup = Date.now()
+  private upstashUrl = process.env.UPSTASH_REDIS_REST_URL || ''
+  private upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN || ''
+
+  private get hasDistributedStore(): boolean {
+    return Boolean(this.upstashUrl && this.upstashToken && this.upstashUrl.startsWith('http'))
+  }
 
   /**
    * Retrieves client IP address from headers safely.
@@ -40,24 +67,100 @@ class InMemoryRateLimiter {
 
   /**
    * Checks whether the current request is within rate limits.
+   * If Upstash Redis is configured, executes atomic distributed rate limit check.
+   * Otherwise falls back to in-memory sliding window.
+   */
+  public async checkLimitAsync(
+    clientKey: string,
+    type: RateLimitType
+  ): Promise<RateLimitResult> {
+    const config = LIMITS[type]
+
+    if (this.hasDistributedStore) {
+      try {
+        const distributedResult = await this.checkUpstashLimit(clientKey, type, config)
+        if (distributedResult) return distributedResult
+      } catch (err) {
+        logger.warn('Distributed rate limit check failed, falling back to local memory', err)
+      }
+    }
+
+    return this.checkInMemoryLimit(clientKey, type, config)
+  }
+
+  /**
+   * Synchronous check for backward compatibility with existing synchronous routes.
    */
   public checkLimit(
-    clientIp: string,
-    type: 'analyze' | 'read'
-  ): {
-    allowed: boolean
-    remaining: number
-    limit: number
-    retryAfterSeconds: number
-  } {
+    clientKey: string,
+    type: RateLimitType
+  ): RateLimitResult {
+    const config = LIMITS[type]
+    return this.checkInMemoryLimit(clientKey, type, config)
+  }
+
+  private async checkUpstashLimit(
+    clientKey: string,
+    type: RateLimitType,
+    config: RateLimitConfig
+  ): Promise<RateLimitResult | null> {
+    const now = Date.now()
+    const windowSeconds = Math.ceil(config.windowMs / 1000)
+    const windowBucket = Math.floor(now / config.windowMs)
+    const redisKey = `ratelimit:${type}:${clientKey}:${windowBucket}`
+
+    // Pipeline: INCR and EXPIRE
+    const res = await fetch(`${this.upstashUrl}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.upstashToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([
+        ['INCR', redisKey],
+        ['EXPIRE', redisKey, windowSeconds * 2],
+      ]),
+      cache: 'no-store',
+    })
+
+    if (!res.ok) return null
+
+    const data = (await res.json()) as Array<{ result?: number }>
+    const currentCount = typeof data?.[0]?.result === 'number' ? data[0].result : 1
+
+    const remaining = Math.max(0, config.maxRequests - currentCount)
+    const nextWindowMs = (windowBucket + 1) * config.windowMs
+    const retryAfterSeconds = Math.max(1, Math.ceil((nextWindowMs - now) / 1000))
+
+    if (currentCount > config.maxRequests) {
+      return {
+        allowed: false,
+        remaining: 0,
+        limit: config.maxRequests,
+        retryAfterSeconds,
+      }
+    }
+
+    return {
+      allowed: true,
+      remaining,
+      limit: config.maxRequests,
+      retryAfterSeconds: 0,
+    }
+  }
+
+  private checkInMemoryLimit(
+    clientKey: string,
+    type: RateLimitType,
+    config: RateLimitConfig
+  ): RateLimitResult {
     const now = Date.now()
     this.maybeCleanup(now)
 
-    const config = LIMITS[type]
-    const key = `${type}:${clientIp}`
-    const record = this.clientStore.get(key) || { timestamps: [] }
+    const key = `${type}:${clientKey}`
+    const record = this.inMemoryStore.get(key) || { timestamps: [] }
 
-    // Filter timestamps within the current sliding window
+    // Sliding window: retain timestamps within the window
     const windowStart = now - config.windowMs
     const validTimestamps = record.timestamps.filter((ts) => ts > windowStart)
 
@@ -75,7 +178,7 @@ class InMemoryRateLimiter {
     }
 
     validTimestamps.push(now)
-    this.clientStore.set(key, { timestamps: validTimestamps })
+    this.inMemoryStore.set(key, { timestamps: validTimestamps })
 
     return {
       allowed: true,
@@ -86,18 +189,17 @@ class InMemoryRateLimiter {
   }
 
   private maybeCleanup(now: number) {
-    // Clean up every 3 minutes
     if (now - this.lastCleanup > 3 * 60 * 1000) {
       this.lastCleanup = now
-      const maxWindow = Math.max(LIMITS.analyze.windowMs, LIMITS.read.windowMs)
+      const maxWindow = Math.max(...Object.values(LIMITS).map((c) => c.windowMs))
       const threshold = now - maxWindow
 
-      for (const [key, record] of this.clientStore.entries()) {
+      for (const [key, record] of this.inMemoryStore.entries()) {
         const fresh = record.timestamps.filter((ts) => ts > threshold)
         if (fresh.length === 0) {
-          this.clientStore.delete(key)
+          this.inMemoryStore.delete(key)
         } else {
-          this.clientStore.set(key, { timestamps: fresh })
+          this.inMemoryStore.set(key, { timestamps: fresh })
         }
       }
     }
@@ -106,10 +208,10 @@ class InMemoryRateLimiter {
 
 // Global Singleton Rate Limiter
 const globalRateLimiterKey = Symbol.for('truthlens.rateLimiter')
-const globalObj = globalThis as unknown as { [key: symbol]: InMemoryRateLimiter }
+const globalObj = globalThis as unknown as { [key: symbol]: RateLimiter }
 
 if (!globalObj[globalRateLimiterKey]) {
-  globalObj[globalRateLimiterKey] = new InMemoryRateLimiter()
+  globalObj[globalRateLimiterKey] = new RateLimiter()
 }
 
 export const rateLimiter = globalObj[globalRateLimiterKey]
@@ -118,12 +220,14 @@ export const rateLimiter = globalObj[globalRateLimiterKey]
  * Standard HTTP rate limit enforcement middleware helper for route handlers.
  * Returns null if allowed; returns standard HTTP 429 response if blocked.
  */
-export function enforceRateLimit(
+export async function enforceRateLimit(
   req: NextRequest,
-  type: 'analyze' | 'read' = 'analyze'
-): NextResponse | null {
+  type: RateLimitType = 'analyze',
+  customKey?: string
+): Promise<NextResponse | null> {
   const ip = rateLimiter.getClientIp(req)
-  const result = rateLimiter.checkLimit(ip, type)
+  const key = customKey ? `${ip}:${customKey}` : ip
+  const result = await rateLimiter.checkLimitAsync(key, type)
 
   if (!result.allowed) {
     return NextResponse.json(

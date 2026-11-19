@@ -7,6 +7,7 @@ import { analyzeImageEvidence } from './image-analyzer'
 import { investigationStore } from './investigation-store'
 import { sanitizeContextString } from './security-utils'
 import { logger } from './logger'
+import { cloudStorage } from './cloud-storage'
 
 export async function processAndAnalyzeMedia(
   file: File | Blob,
@@ -231,3 +232,43 @@ export async function processAndAnalyzeMedia(
     cleanupTempFiles(targetSavedPath, extractedAudioTrack)
   }
 }
+
+/**
+ * Ingests and analyzes media directly from a verified cloud storage reference.
+ * Validates ownership, checks binary signatures, stages in /tmp, and purges upon completion.
+ */
+export async function processAndAnalyzeStorageKey(
+  storageKey: string,
+  originalFilename: string,
+  context = '',
+  modalityOverride?: 'video' | 'audio' | 'image',
+  userId?: string
+): Promise<ForensicAnalysisOutput> {
+  // 1. Enforce storage reference ownership
+  if (userId && !cloudStorage.verifyStorageKeyOwnership(storageKey, userId)) {
+    throw new Error('Access denied: Storage reference does not belong to the authenticated session.')
+  }
+
+  // 2. Retrieve object from storage and stage safely in /tmp with magic byte verification
+  const { tempPath, buffer } = await cloudStorage.downloadToTempFile(storageKey, originalFilename)
+
+  try {
+    const blob = new Blob([buffer])
+    const result = await processAndAnalyzeMedia(blob, originalFilename, context, modalityOverride, userId)
+
+    // Link storageKey to investigation record
+    if (result.investigationId) {
+      const rec = investigationStore.getRecord(result.investigationId, userId)
+      if (rec) {
+        rec.storageKey = storageKey
+        investigationStore.saveRecord(rec)
+      }
+    }
+
+    return result
+  } finally {
+    // Clean up temporary staged file from /tmp
+    cleanupTempFiles(tempPath)
+  }
+}
+

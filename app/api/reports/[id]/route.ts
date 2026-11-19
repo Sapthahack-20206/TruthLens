@@ -7,11 +7,13 @@ import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
 import { authService } from '@/lib/backend-engine/auth-service'
 import { databaseService } from '@/lib/backend-engine/database'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const rateLimitResponse = enforceRateLimit(req, 'read')
+  const rateLimitResponse = await enforceRateLimit(req, 'read')
   if (rateLimitResponse) return rateLimitResponse
 
   try {
@@ -26,17 +28,34 @@ export async function GET(
 
     const { effectiveUserId } = authService.getAuthContext(req)
 
-    // Lookup output or record to verify ownership (supports Supabase PostgreSQL and local cache)
-    const output = await investigationStore.getOutputAsync(validId, effectiveUserId)
-    const record = await investigationStore.getRecordAsync(validId, effectiveUserId)
-
     // Baseline sample report rep-baseline-001 is open for inspection
-    if (!output && !record && validId !== 'rep-baseline-001') {
+    const isBaselineSample = validId === 'rep-baseline-001' || validId === 'inv-baseline-sample'
+
+    // Retrieve raw record to verify existence and check ownership
+    const unverifiedRecord = investigationStore.getRawRecord(validId)
+    const unverifiedOutput = investigationStore.getRawOutput(validId)
+
+    if (!unverifiedRecord && !unverifiedOutput && !isBaselineSample) {
       return NextResponse.json(
-        { detail: `Forensic report "${validId}" was not found or access is restricted.` },
+        { detail: `Forensic report "${validId}" was not found.` },
         { status: 404 }
       )
     }
+
+    // Ownership validation: verify effectiveUserId matches the owner
+    const ownerUserId = unverifiedRecord?.userId || (unverifiedOutput as unknown as { userId?: string })?.userId
+
+    if (ownerUserId && !isBaselineSample) {
+      if (ownerUserId !== effectiveUserId) {
+        return NextResponse.json(
+          { detail: 'Forbidden: You do not have authorization to view or download this forensic report.' },
+          { status: 403 }
+        )
+      }
+    }
+
+    const output = isBaselineSample ? unverifiedOutput : investigationStore.getOutput(validId, effectiveUserId)
+    const record = isBaselineSample ? unverifiedRecord : investigationStore.getRecord(validId, effectiveUserId)
 
     const reportData: ForensicReportData = {
       reportId: validId,
@@ -100,6 +119,7 @@ export async function GET(
       ],
     }
 
+    // Generate PDF ONLY after successful ownership validation
     const pdfBlob = generateForensicPdfBlob(reportData)
     const arrayBuffer = await pdfBlob.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
