@@ -1,12 +1,12 @@
 /**
  * TruthLens Analysis Engine Verification Script
  */
-import { validateMagicNumber } from '../lib/analysis/media-processor.ts'
-import { extractImageMetadata, generateErrorLevelAnalysis } from '../lib/analysis/image-analyzer.ts'
-import { extractAudioMetadata, analyzeAudioAcoustics } from '../lib/analysis/audio-analyzer.ts'
-import { parseMp4ContainerMetadata } from '../lib/analysis/media-processor.ts'
-import { generateForensicPdfReport } from '../lib/analysis/report-generator.ts'
-import { saveForensicResponse, getForensicResponseById, listAllInvestigations } from '../lib/analysis/investigation-store.ts'
+import { validateMagicNumber } from '../lib/analysis/media-processor'
+import { extractImageMetadata, generateErrorLevelAnalysis } from '../lib/analysis/image-analyzer'
+import { extractAudioMetadata, analyzeAudioAcoustics } from '../lib/analysis/audio-analyzer'
+import { parseMp4ContainerMetadata } from '../lib/analysis/media-processor'
+import { generateForensicPdfReport } from '../lib/analysis/report-generator'
+import { saveForensicResponse, getForensicResponseById, listAllInvestigations } from '../lib/analysis/investigation-store'
 
 console.log('--- TruthLens Forensic Analysis Engine Tests ---')
 

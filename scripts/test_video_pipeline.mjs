@@ -3,8 +3,8 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { analyzeVideoEvidence } from '../lib/analysis/video-analyzer.ts'
-import { processUploadedEvidence } from '../lib/analysis/media-processor.ts'
+import { analyzeVideoEvidence } from '../lib/analysis/video-analyzer'
+import { processUploadedEvidence } from '../lib/analysis/media-processor'
 
 console.log('=== TruthLens Advanced Video Forensic Analysis Tests ===\n')
 
