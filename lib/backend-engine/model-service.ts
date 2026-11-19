@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { logger } from './logger'
+import { ARTIFACTS_TEMP_DIR } from './cloud-storage'
 
 const execFileAsync = promisify(execFile)
 
@@ -87,9 +88,13 @@ export class ModelService {
 
   constructor() {
     this.scriptPath = path.join(process.cwd(), 'lib', 'backend-engine', 'python-engine', 'deepfake_detector.py')
-    this.outputDir = path.join(process.cwd(), 'public', 'forensic-output')
-    if (!fs.existsSync(this.outputDir)) {
-      fs.mkdirSync(this.outputDir, { recursive: true })
+    this.outputDir = ARTIFACTS_TEMP_DIR
+    try {
+      if (!fs.existsSync(this.outputDir)) {
+        fs.mkdirSync(this.outputDir, { recursive: true })
+      }
+    } catch {
+      // Non-fatal if temp directory creation delayed
     }
   }
 

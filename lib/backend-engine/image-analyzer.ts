@@ -5,6 +5,7 @@ import { exec, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { DetectionIndicator, MediaMetadata, SuspiciousRegion } from './types'
 import { modelService } from './model-service'
+import { ARTIFACTS_TEMP_DIR, cloudStorage } from './cloud-storage'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -72,12 +73,10 @@ export async function analyzeImageEvidence(
   if (ext === '.jpg' || ext === '.jpeg' || ext === '.png' || ext === '.webp') {
     try {
       const elaFilename = `ela_${path.basename(imagePath, ext)}.jpg`
-      // Save directly to public/forensic-output so Next.js can serve it
-      const publicOutputDir = path.join(process.cwd(), 'public', 'forensic-output')
-      if (!fs.existsSync(publicOutputDir)) {
-        fs.mkdirSync(publicOutputDir, { recursive: true })
+      if (!fs.existsSync(ARTIFACTS_TEMP_DIR)) {
+        fs.mkdirSync(ARTIFACTS_TEMP_DIR, { recursive: true })
       }
-      const elaOutputPath = path.join(publicOutputDir, elaFilename)
+      const elaOutputPath = path.join(ARTIFACTS_TEMP_DIR, elaFilename)
 
       const pythonScript = `import sys
 import os
@@ -111,10 +110,19 @@ except Exception as e:
 `
       const { stdout } = await execFileAsync('python', ['-c', pythonScript, imagePath, elaOutputPath])
       if (stdout.includes('SUCCESS') && fs.existsSync(elaOutputPath)) {
-        visualizations.push({
-          label: 'Error Level Analysis (ELA) Compression Map',
-          url: `/forensic-output/${elaFilename}`,
-        })
+        try {
+          const elaBuffer = fs.readFileSync(elaOutputPath)
+          const uploadRes = await cloudStorage.uploadArtifact(elaFilename, elaBuffer, 'image/jpeg')
+          visualizations.push({
+            label: 'Error Level Analysis (ELA) Compression Map',
+            url: uploadRes.url,
+          })
+        } catch {
+          visualizations.push({
+            label: 'Error Level Analysis (ELA) Compression Map',
+            url: `/forensic-output/${elaFilename}`,
+          })
+        }
 
         indicators.push({
           id: 'ind-img-ela-01',

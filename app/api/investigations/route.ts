@@ -23,8 +23,8 @@ export async function GET(req: NextRequest) {
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10))
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '10', 10)))
 
-    // Fetch user-isolated records
-    let records = investigationStore.listRecords(effectiveUserId)
+    // Fetch user-isolated records (hydrated from Supabase PostgreSQL or local cache)
+    let records = await investigationStore.listRecordsAsync(effectiveUserId)
 
     // Filter by query
     if (query) {

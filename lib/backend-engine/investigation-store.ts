@@ -1,7 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import type { ForensicAnalysisOutput } from './types'
 import { validateIdParam } from './security-utils'
+import { databaseService } from './database'
+import { logger } from './logger'
 
 export interface InvestigationRecord {
   id: string
@@ -30,8 +33,10 @@ export interface UserInvestigationStats {
 const MAX_STORED_RECORDS = 500
 const MAX_STORED_OUTPUTS = 200
 
-const DATA_DIR = path.join(process.cwd(), 'data')
-const STORE_FILE = path.join(DATA_DIR, 'investigations_db.json')
+// Safe temporary writable directory on all hosting environments (including Vercel)
+const TEMP_DATA_DIR = path.join(os.tmpdir(), 'truthlens-forensics', 'data')
+const TEMP_STORE_FILE = path.join(TEMP_DATA_DIR, 'investigations_db.json')
+const LEGACY_STORE_FILE = path.join(process.cwd(), 'data', 'investigations_db.json')
 
 class InvestigationStore {
   private records: Map<string, InvestigationRecord> = new Map()
@@ -45,8 +50,8 @@ class InvestigationStore {
 
   private ensureDataDir() {
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true })
+      if (!fs.existsSync(TEMP_DATA_DIR)) {
+        fs.mkdirSync(TEMP_DATA_DIR, { recursive: true })
       }
     } catch {
       // In-memory fallback
@@ -54,29 +59,52 @@ class InvestigationStore {
   }
 
   private loadFromDisk() {
+    // 1. Try temp store file first (most up-to-date in current environment)
+    let loaded = false
     try {
-      if (fs.existsSync(STORE_FILE)) {
-        const raw = fs.readFileSync(STORE_FILE, 'utf-8')
-        const data = JSON.parse(raw) as {
-          records?: InvestigationRecord[]
-          outputs?: ForensicAnalysisOutput[]
-        }
+      if (fs.existsSync(TEMP_STORE_FILE)) {
+        const raw = fs.readFileSync(TEMP_STORE_FILE, 'utf-8')
+        this.parseAndHydrate(raw)
+        loaded = true
+      }
+    } catch {
+      // Continue to legacy check
+    }
 
-        if (Array.isArray(data.records)) {
-          for (const rec of data.records) {
-            if (rec && rec.id) this.records.set(rec.id, rec)
-          }
+    // 2. If not in temp, check legacy workspace file
+    if (!loaded) {
+      try {
+        if (fs.existsSync(LEGACY_STORE_FILE)) {
+          const raw = fs.readFileSync(LEGACY_STORE_FILE, 'utf-8')
+          this.parseAndHydrate(raw)
         }
-        if (Array.isArray(data.outputs)) {
-          for (const out of data.outputs) {
-            if (out && out.id) {
-              this.outputs.set(out.id, out)
-              if (out.investigationId) {
-                this.outputs.set(out.investigationId, out)
-              }
-              if (out.reportId) {
-                this.outputs.set(out.reportId, out)
-              }
+      } catch {
+        // In-memory fallback
+      }
+    }
+  }
+
+  private parseAndHydrate(raw: string) {
+    try {
+      const data = JSON.parse(raw) as {
+        records?: InvestigationRecord[]
+        outputs?: ForensicAnalysisOutput[]
+      }
+
+      if (Array.isArray(data.records)) {
+        for (const rec of data.records) {
+          if (rec && rec.id) this.records.set(rec.id, rec)
+        }
+      }
+      if (Array.isArray(data.outputs)) {
+        for (const out of data.outputs) {
+          if (out && out.id) {
+            this.outputs.set(out.id, out)
+            if (out.investigationId) {
+              this.outputs.set(out.investigationId, out)
+            }
+            if (out.reportId) {
+              this.outputs.set(out.reportId, out)
             }
           }
         }
@@ -93,7 +121,17 @@ class InvestigationStore {
         records: Array.from(this.records.values()),
         outputs: Array.from(this.outputs.values()),
       }
-      fs.writeFileSync(STORE_FILE, JSON.stringify(data, null, 2), 'utf-8')
+      fs.writeFileSync(TEMP_STORE_FILE, JSON.stringify(data, null, 2), 'utf-8')
+
+      // Also persist to legacy dir if writable in local dev
+      try {
+        const legacyDir = path.join(process.cwd(), 'data')
+        if (fs.existsSync(legacyDir)) {
+          fs.writeFileSync(LEGACY_STORE_FILE, JSON.stringify(data, null, 2), 'utf-8')
+        }
+      } catch {
+        // Read-only serverless filesystem expected
+      }
     } catch {
       // In-memory fallback
     }
@@ -103,7 +141,7 @@ class InvestigationStore {
     const sampleId = 'inv-baseline-sample'
     const sampleReportId = 'rep-baseline-001'
     if (!this.records.has(sampleId)) {
-      this.records.set(sampleId, {
+      const baselineRecord: InvestigationRecord = {
         id: sampleId,
         filename: 'gemini_generated_video_a5be6a4a.mp4',
         mediaType: 'video',
@@ -115,8 +153,10 @@ class InvestigationStore {
         userId: 'usr-lead-analyst',
         fileSize: 1048576,
         uncertaintyStatus: 'Requires Further Review',
-      })
+      }
+      this.records.set(sampleId, baselineRecord)
       this.persistToDisk()
+      databaseService.saveInvestigation(baselineRecord).catch(() => {})
     }
   }
 
@@ -130,8 +170,19 @@ class InvestigationStore {
       if (firstKey) this.records.delete(firstKey)
     }
 
-    this.records.set(validId, { ...record, id: validId })
+    const savedRecord = { ...record, id: validId }
+    this.records.set(validId, savedRecord)
     this.persistToDisk()
+
+    // Async sync to database
+    databaseService.saveInvestigation(savedRecord).catch((err) => {
+      logger.warn('Failed to asynchronously persist investigation to database', err)
+    })
+  }
+
+  async saveRecordAsync(record: InvestigationRecord): Promise<void> {
+    this.saveRecord(record)
+    await databaseService.saveInvestigation(record)
   }
 
   getRecord(id: string, userId?: string): InvestigationRecord | undefined {
@@ -158,6 +209,22 @@ class InvestigationStore {
     return record
   }
 
+  async getRecordAsync(id: string, userId?: string): Promise<InvestigationRecord | undefined> {
+    const cached = this.getRecord(id, userId)
+    if (cached) return cached
+
+    const validId = validateIdParam(id)
+    if (!validId) return undefined
+
+    const dbRecord = await databaseService.getInvestigation(validId, userId)
+    if (dbRecord) {
+      this.records.set(dbRecord.id, dbRecord)
+      return dbRecord
+    }
+
+    return undefined
+  }
+
   listRecords(userId?: string): InvestigationRecord[] {
     const all = Array.from(this.records.values())
 
@@ -175,6 +242,17 @@ class InvestigationStore {
       : all
 
     return filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }
+
+  async listRecordsAsync(userId?: string): Promise<InvestigationRecord[]> {
+    const dbRecords = await databaseService.listInvestigations(userId)
+    if (dbRecords && dbRecords.length > 0) {
+      for (const rec of dbRecords) {
+        this.records.set(rec.id, rec)
+      }
+      return dbRecords
+    }
+    return this.listRecords(userId)
   }
 
   saveOutput(output: ForensicAnalysisOutput, userId?: string) {
@@ -202,6 +280,16 @@ class InvestigationStore {
       }
     }
     this.persistToDisk()
+
+    // Async sync to database
+    databaseService.saveOutput(output, userId).catch((err) => {
+      logger.warn('Failed to asynchronously persist analysis output to database', err)
+    })
+  }
+
+  async saveOutputAsync(output: ForensicAnalysisOutput, userId?: string): Promise<void> {
+    this.saveOutput(output, userId)
+    await databaseService.saveOutput(output, userId)
   }
 
   getOutput(id: string, userId?: string): ForensicAnalysisOutput | undefined {
@@ -226,6 +314,22 @@ class InvestigationStore {
     }
 
     return output
+  }
+
+  async getOutputAsync(id: string, userId?: string): Promise<ForensicAnalysisOutput | undefined> {
+    const cached = this.getOutput(id, userId)
+    if (cached) return cached
+
+    const validId = validateIdParam(id)
+    if (!validId) return undefined
+
+    const dbOutput = await databaseService.getOutput(validId, userId)
+    if (dbOutput) {
+      this.outputs.set(dbOutput.id, dbOutput)
+      return dbOutput
+    }
+
+    return undefined
   }
 
   /**
@@ -254,7 +358,18 @@ class InvestigationStore {
       this.persistToDisk()
     }
 
+    // Async sync transfer to database
+    databaseService.transferGuestInvestigations(fromGuestUserId, toUserId).catch((err) => {
+      logger.warn('Failed to asynchronously transfer guest records in database', err)
+    })
+
     return transferred
+  }
+
+  async transferGuestRecordsAsync(fromGuestUserId: string, toUserId: string): Promise<number> {
+    const localCount = this.transferGuestRecords(fromGuestUserId, toUserId)
+    const dbCount = await databaseService.transferGuestInvestigations(fromGuestUserId, toUserId)
+    return Math.max(localCount, dbCount)
   }
 
   getStats(userId?: string): UserInvestigationStats {

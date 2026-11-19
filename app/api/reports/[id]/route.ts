@@ -5,6 +5,7 @@ import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
 import { validateIdParam } from '@/lib/backend-engine/security-utils'
 import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
 import { authService } from '@/lib/backend-engine/auth-service'
+import { databaseService } from '@/lib/backend-engine/database'
 
 export async function GET(
   req: NextRequest,
@@ -25,9 +26,9 @@ export async function GET(
 
     const { effectiveUserId } = authService.getAuthContext(req)
 
-    // Lookup output or record to verify ownership
-    const output = investigationStore.getOutput(validId, effectiveUserId)
-    const record = investigationStore.getRecord(validId, effectiveUserId)
+    // Lookup output or record to verify ownership (supports Supabase PostgreSQL and local cache)
+    const output = await investigationStore.getOutputAsync(validId, effectiveUserId)
+    const record = await investigationStore.getRecordAsync(validId, effectiveUserId)
 
     // Baseline sample report rep-baseline-001 is open for inspection
     if (!output && !record && validId !== 'rep-baseline-001') {
@@ -102,6 +103,15 @@ export async function GET(
     const pdfBlob = generateForensicPdfBlob(reportData)
     const arrayBuffer = await pdfBlob.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
+
+    // Store report audit metadata in production database
+    databaseService.saveReportMetadata({
+      id: validId,
+      investigationId: reportData.investigationId,
+      title: reportData.title,
+      summary: reportData.summary,
+      fileSizeBytes: buffer.length,
+    }).catch(() => {})
 
     return new NextResponse(buffer, {
       status: 200,

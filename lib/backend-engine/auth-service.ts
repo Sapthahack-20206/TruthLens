@@ -1,7 +1,10 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { NextRequest } from 'next/server'
+import { databaseService } from './database'
+import { logger } from './logger'
 
 export interface User {
   id: string
@@ -28,9 +31,11 @@ export interface SafeUser {
   createdAt: string
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data')
-const USERS_FILE = path.join(DATA_DIR, 'users_db.json')
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions_db.json')
+const TEMP_DATA_DIR = path.join(os.tmpdir(), 'truthlens-forensics', 'data')
+const TEMP_USERS_FILE = path.join(TEMP_DATA_DIR, 'users_db.json')
+const TEMP_SESSIONS_FILE = path.join(TEMP_DATA_DIR, 'sessions_db.json')
+const LEGACY_USERS_FILE = path.join(process.cwd(), 'data', 'users_db.json')
+const LEGACY_SESSIONS_FILE = path.join(process.cwd(), 'data', 'sessions_db.json')
 
 import { GUEST_COOKIE_NAME, AUTH_COOKIE_NAME, GUEST_COOKIE_MAX_AGE } from './auth-constants'
 export { GUEST_COOKIE_NAME, AUTH_COOKIE_NAME, GUEST_COOKIE_MAX_AGE }
@@ -56,25 +61,37 @@ class AuthService {
 
   private ensureDataDir() {
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true })
+      if (!fs.existsSync(TEMP_DATA_DIR)) {
+        fs.mkdirSync(TEMP_DATA_DIR, { recursive: true })
       }
     } catch {
-      // Ignore if dir cannot be created synchronously in serverless
+      // In-memory fallback
     }
   }
 
   private loadUsers() {
+    let loaded = false
     try {
-      if (fs.existsSync(USERS_FILE)) {
-        const raw = fs.readFileSync(USERS_FILE, 'utf-8')
+      if (fs.existsSync(TEMP_USERS_FILE)) {
+        const raw = fs.readFileSync(TEMP_USERS_FILE, 'utf-8')
         const list: User[] = JSON.parse(raw)
-        for (const u of list) {
-          this.users.set(u.id, u)
-        }
+        for (const u of list) this.users.set(u.id, u)
+        loaded = true
       }
     } catch {
-      // In-memory fallback
+      // Continue
+    }
+
+    if (!loaded) {
+      try {
+        if (fs.existsSync(LEGACY_USERS_FILE)) {
+          const raw = fs.readFileSync(LEGACY_USERS_FILE, 'utf-8')
+          const list: User[] = JSON.parse(raw)
+          for (const u of list) this.users.set(u.id, u)
+        }
+      } catch {
+        // In-memory fallback
+      }
     }
   }
 
@@ -82,16 +99,26 @@ class AuthService {
     try {
       this.ensureDataDir()
       const list = Array.from(this.users.values())
-      fs.writeFileSync(USERS_FILE, JSON.stringify(list, null, 2), 'utf-8')
+      fs.writeFileSync(TEMP_USERS_FILE, JSON.stringify(list, null, 2), 'utf-8')
+
+      try {
+        const legacyDir = path.join(process.cwd(), 'data')
+        if (fs.existsSync(legacyDir)) {
+          fs.writeFileSync(LEGACY_USERS_FILE, JSON.stringify(list, null, 2), 'utf-8')
+        }
+      } catch {
+        // Read-only serverless filesystem expected
+      }
     } catch {
       // In-memory fallback
     }
   }
 
   private loadSessions() {
+    let loaded = false
     try {
-      if (fs.existsSync(SESSIONS_FILE)) {
-        const raw = fs.readFileSync(SESSIONS_FILE, 'utf-8')
+      if (fs.existsSync(TEMP_SESSIONS_FILE)) {
+        const raw = fs.readFileSync(TEMP_SESSIONS_FILE, 'utf-8')
         const list: UserSession[] = JSON.parse(raw)
         const now = Date.now()
         for (const s of list) {
@@ -99,9 +126,27 @@ class AuthService {
             this.sessions.set(s.token, s)
           }
         }
+        loaded = true
       }
     } catch {
-      // In-memory fallback
+      // Continue
+    }
+
+    if (!loaded) {
+      try {
+        if (fs.existsSync(LEGACY_SESSIONS_FILE)) {
+          const raw = fs.readFileSync(LEGACY_SESSIONS_FILE, 'utf-8')
+          const list: UserSession[] = JSON.parse(raw)
+          const now = Date.now()
+          for (const s of list) {
+            if (new Date(s.expiresAt).getTime() > now) {
+              this.sessions.set(s.token, s)
+            }
+          }
+        }
+      } catch {
+        // In-memory fallback
+      }
     }
   }
 
@@ -109,7 +154,16 @@ class AuthService {
     try {
       this.ensureDataDir()
       const list = Array.from(this.sessions.values())
-      fs.writeFileSync(SESSIONS_FILE, JSON.stringify(list, null, 2), 'utf-8')
+      fs.writeFileSync(TEMP_SESSIONS_FILE, JSON.stringify(list, null, 2), 'utf-8')
+
+      try {
+        const legacyDir = path.join(process.cwd(), 'data')
+        if (fs.existsSync(legacyDir)) {
+          fs.writeFileSync(LEGACY_SESSIONS_FILE, JSON.stringify(list, null, 2), 'utf-8')
+        }
+      } catch {
+        // Read-only serverless filesystem expected
+      }
     } catch {
       // In-memory fallback
     }
@@ -136,6 +190,7 @@ class AuthService {
       }
       this.users.set(defaultUser.id, defaultUser)
       this.saveUsers()
+      databaseService.createUser(defaultUser).catch(() => {})
     }
   }
 
@@ -174,12 +229,30 @@ class AuthService {
 
     this.users.set(id, user)
     this.saveUsers()
+    databaseService.createUser(user).catch((err) => {
+      logger.warn('Failed to asynchronously persist user to database', err)
+    })
 
     const token = this.createSession(id)
     return {
       user: this.toSafeUser(user),
       token,
     }
+  }
+
+  async registerUserAsync(name: string, email: string, password: string): Promise<{ user: SafeUser; token: string }> {
+    const cleanEmail = email.trim().toLowerCase()
+    const existingDbUser = await databaseService.findUserByEmail(cleanEmail)
+    if (existingDbUser) {
+      throw new Error('An account with this email address already exists. Please sign in instead.')
+    }
+
+    const result = this.registerUser(name, email, password)
+    const fullUser = this.users.get(result.user.id)
+    if (fullUser) {
+      await databaseService.createUser(fullUser)
+    }
+    return result
   }
 
   loginUser(email: string, password: string): { user: SafeUser; token: string } {
@@ -202,6 +275,34 @@ class AuthService {
     }
   }
 
+  async loginUserAsync(email: string, password: string): Promise<{ user: SafeUser; token: string }> {
+    const cleanEmail = email.trim().toLowerCase()
+    let user = Array.from(this.users.values()).find((u) => u.email.toLowerCase() === cleanEmail)
+
+    if (!user) {
+      const dbUser = await databaseService.findUserByEmail(cleanEmail)
+      if (dbUser) {
+        user = dbUser
+        this.users.set(user.id, user)
+      }
+    }
+
+    if (!user) {
+      throw new Error('No account found with this email. Please check your email or register.')
+    }
+
+    const calculatedHash = this.hashPassword(password, user.salt)
+    if (calculatedHash !== user.passwordHash) {
+      throw new Error('Incorrect password. Please verify and try again.')
+    }
+
+    const token = await this.createSessionAsync(user.id)
+    return {
+      user: this.toSafeUser(user),
+      token,
+    }
+  }
+
   createSession(userId: string): string {
     const token = crypto.randomBytes(32).toString('hex')
     const createdAt = new Date().toISOString()
@@ -216,6 +317,19 @@ class AuthService {
 
     this.sessions.set(token, session)
     this.saveSessions()
+    databaseService.createSession(session).catch((err) => {
+      logger.warn('Failed to asynchronously persist session to database', err)
+    })
+
+    return token
+  }
+
+  async createSessionAsync(userId: string): Promise<string> {
+    const token = this.createSession(userId)
+    const session = this.sessions.get(token)
+    if (session) {
+      await databaseService.createSession(session)
+    }
     return token
   }
 
@@ -227,6 +341,7 @@ class AuthService {
     if (new Date(session.expiresAt).getTime() <= Date.now()) {
       this.sessions.delete(token)
       this.saveSessions()
+      databaseService.deleteSession(token).catch(() => {})
       return null
     }
 
@@ -235,10 +350,32 @@ class AuthService {
     return this.toSafeUser(user)
   }
 
+  async getUserFromSessionAsync(token: string): Promise<SafeUser | null> {
+    const local = this.getUserFromSession(token)
+    if (local) return local
+
+    const dbSession = await databaseService.findSession(token)
+    if (!dbSession) return null
+
+    let user = this.users.get(dbSession.userId)
+    if (!user) {
+      const dbUser = await databaseService.findUserById(dbSession.userId)
+      if (dbUser) {
+        user = dbUser
+        this.users.set(user.id, user)
+      }
+    }
+
+    if (!user) return null
+    this.sessions.set(token, dbSession)
+    return this.toSafeUser(user)
+  }
+
   deleteSession(token: string) {
     if (this.sessions.has(token)) {
       this.sessions.delete(token)
       this.saveSessions()
+      databaseService.deleteSession(token).catch(() => {})
     }
   }
 
@@ -321,6 +458,32 @@ class AuthService {
       guestSessionId: newGuestId,
       isNewGuest: true,
     }
+  }
+
+  async getAuthContextAsync(req: NextRequest): Promise<AuthContext> {
+    const cookieToken = req.cookies.get(AUTH_COOKIE_NAME)?.value
+    let token = cookieToken
+
+    if (!token) {
+      const authHeader = req.headers.get('authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.slice(7).trim()
+      }
+    }
+
+    if (token) {
+      const user = await this.getUserFromSessionAsync(token)
+      if (user) {
+        return {
+          user,
+          effectiveUserId: user.id,
+          isGuest: false,
+          isNewGuest: false,
+        }
+      }
+    }
+
+    return this.getAuthContext(req)
   }
 
   /**

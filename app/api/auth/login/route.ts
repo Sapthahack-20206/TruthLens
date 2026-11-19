@@ -19,12 +19,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { user, token } = authService.loginUser(email, password)
+    const { user, token } = await authService.loginUserAsync(email, password)
 
     // Seamlessly transfer any analysis records created while browsing as a guest
     const guestCookie = req.cookies.get(GUEST_COOKIE_NAME)?.value
     if (guestCookie) {
-      investigationStore.transferGuestRecords(`guest-${guestCookie}`, user.id)
+      await investigationStore.transferGuestRecordsAsync(`guest-${guestCookie}`, user.id)
     }
 
     const response = NextResponse.json(

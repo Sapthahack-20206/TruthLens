@@ -23,7 +23,7 @@ export async function GET(
     }
 
     const authContext = authService.getAuthContext(req)
-    const record = investigationStore.getRecord(validId, authContext.effectiveUserId)
+    const record = await investigationStore.getRecordAsync(validId, authContext.effectiveUserId)
 
     if (!record) {
       return NextResponse.json(
@@ -33,7 +33,7 @@ export async function GET(
     }
 
     // Attach analysis output if available so client can reopen previous analysis results
-    const output = investigationStore.getOutput(validId, authContext.effectiveUserId)
+    const output = await investigationStore.getOutputAsync(validId, authContext.effectiveUserId)
 
     const response = NextResponse.json(
       {
