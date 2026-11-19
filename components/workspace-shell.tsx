@@ -8,6 +8,7 @@ import { Activity, AlertCircle, ArrowDown, ArrowRight, AudioLines, Bell, Check, 
 import { analyzeAudio, analyzeCrossModal, analyzeImage, analyzeVideo, getInvestigation, getReport, listInvestigations, type InvestigationRecord } from '@/lib/truthlens-api'
 import AnalysisResult from '@/components/analysis-result'
 import MediaPreview, { useMediaPreviewUrl } from '@/components/media-preview'
+import MediaUpload from '@/components/media-upload'
 
 const LOGO_URL = 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/TruthLens%20Aperture%20Logo-Zh8uJ1dIwq1yd1IEsjzn4BDgWzmMQA.png'
 
@@ -33,16 +34,16 @@ const sectionTitles: Record<string, { title: string; description: string }> = {
 
 const supportedTypes: Record<string, { label: string; accept: string; extensions: string }> = {
   'image-analysis': { label: 'Image', accept: 'image/png,image/jpeg,image/webp', extensions: 'PNG, JPG, JPEG, WEBP' },
-  'video-analysis': { label: 'Video', accept: 'video/mp4,video/quicktime,video/x-msvideo', extensions: 'MP4, MOV, AVI' },
-  'audio-analysis': { label: 'Audio', accept: 'audio/wav,audio/mpeg,audio/mp4', extensions: 'WAV, MP3, M4A' },
-  'cross-modal': { label: 'Media', accept: 'image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/x-msvideo,audio/wav,audio/mpeg,audio/mp4,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document', extensions: 'Images, video, audio, TXT, PDF, DOCX' },
+  'video-analysis': { label: 'Video', accept: 'video/mp4,video/quicktime,video/webm', extensions: 'MP4, MOV, WEBM' },
+  'audio-analysis': { label: 'Audio', accept: 'audio/wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac', extensions: 'WAV, MP3, M4A' },
+  'cross-modal': { label: 'Media', accept: 'image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,audio/wav,audio/mpeg,audio/mp4,audio/x-m4a,text/plain', extensions: 'Video (MP4, MOV, WEBM), Audio (MP3, WAV, M4A), Images (JPG, PNG, WEBP), Transcripts (TXT)' },
 }
 
 const acceptedExtensions: Record<string, string[]> = {
   'image-analysis': ['png', 'jpg', 'jpeg', 'webp'],
-  'video-analysis': ['mp4', 'mov', 'avi'],
+  'video-analysis': ['mp4', 'mov', 'webm'],
   'audio-analysis': ['wav', 'mp3', 'm4a'],
-  'cross-modal': ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'wav', 'mp3', 'm4a', 'txt', 'pdf', 'docx'],
+  'cross-modal': ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'webm', 'wav', 'mp3', 'm4a', 'txt'],
 }
 
 function formatDate(value: string) {
@@ -59,8 +60,8 @@ function EmptyState({ title, text, action }: { title: string; text: string; acti
 }
 
 function UploadWorkspace({ section }: { section: string }) {
-  const picker = useRef<HTMLInputElement>(null)
   const [files, setFiles] = useState<File[]>([])
+  const [activeFileIndex, setActiveFileIndex] = useState(0)
   const [context, setContext] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<number | null>(null)
@@ -71,22 +72,36 @@ function UploadWorkspace({ section }: { section: string }) {
   const isCrossModal = section === 'cross-modal'
   const Icon = section === 'image-analysis' ? FileImage : section === 'video-analysis' ? Video : section === 'audio-analysis' ? AudioLines : Fingerprint
 
-  const onFiles = (incoming: FileList | null) => {
-    if (!incoming) return
-    const allowed = acceptedExtensions[section] ?? acceptedExtensions['cross-modal']
-    const candidates = Array.from(incoming)
-    const valid = candidates.filter((file) => allowed.includes(file.name.split('.').pop()?.toLowerCase() ?? ''))
-    if (valid.length !== candidates.length) setMessage(`Some files were skipped. Supported formats: ${config.extensions}.`)
-    else setMessage('')
-    if (!valid.length) return
+  const handleFilesChange = (newFiles: File[]) => {
+    setFiles(newFiles)
     setResponse(null)
-    setFiles((current) => (isCrossModal ? [...current, ...valid].slice(0, 8) : valid.slice(0, 1)))
+    setMessage('')
+    if (activeFileIndex >= newFiles.length) {
+      setActiveFileIndex(Math.max(0, newFiles.length - 1))
+    }
+  }
+
+  const handleRemoveFile = (index: number) => {
+    const updated = files.filter((_, idx) => idx !== index)
+    setFiles(updated)
+    setResponse(null)
+    if (activeFileIndex >= updated.length) {
+      setActiveFileIndex(Math.max(0, updated.length - 1))
+    }
+  }
+
+  const handleSyncContext = (transcriptText: string) => {
+    setContext((prev) => {
+      const cleanTranscript = transcriptText.trim()
+      if (!prev.trim()) return cleanTranscript
+      return `${prev.trim()}\n\n[Transcript Context]:\n${cleanTranscript}`
+    })
+    setMessage('Transcript content synced into investigation context.')
   }
 
   const submit = async () => {
     if (!files.length) {
-      setMessage('Add a supported source file to continue.')
-      picker.current?.click()
+      setMessage('Stage at least one supported digital evidence file to proceed.')
       return
     }
     setBusy(true)
@@ -113,36 +128,82 @@ function UploadWorkspace({ section }: { section: string }) {
     }
   }
 
-  const removeFile = (index: number) => {
-    setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))
-    setResponse(null)
-  }
-
   return <>
     <div className="workspace-content-grid">
       <section className="workspace-panel upload-panel">
-        <div className="panel-heading"><div><p className="eyebrow">NEW INVESTIGATION</p><h2>{isCrossModal ? 'Bring related sources together' : `Start with the ${config.label.toLowerCase()}`}</h2></div><span className="panel-icon"><Icon aria-hidden="true" /></span></div>
-        <p className="panel-intro">Upload original files and share any context that may help reviewers understand what they are looking at.</p>
-        <div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onFiles(event.dataTransfer.files) }}>
-          <input ref={picker} type="file" multiple={isCrossModal} accept={config.accept} className="sr-only" onChange={(event) => { onFiles(event.target.files); event.currentTarget.value = '' }} aria-label={`Choose ${config.label.toLowerCase()} files`} />
-          <span className="drop-icon"><Upload aria-hidden="true" /></span>
-          <h3>Drop your files here</h3>
-          <p>or <button className="inline-action" type="button" onClick={() => picker.current?.click()}>browse files</button></p>
-          <span className="drop-note">Supported formats: {config.extensions}</span>
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">NEW INVESTIGATION</p>
+            <h2>{isCrossModal ? 'Bring related sources together' : `Start with the ${config.label.toLowerCase()}`}</h2>
+          </div>
+          <span className="panel-icon"><Icon aria-hidden="true" /></span>
         </div>
-        {files.length > 0 && <div className="upload-file-list" aria-live="polite">{files.map((file, index) => <div className="upload-file-row" key={`${file.name}-${index}`}><FileText aria-hidden="true" /><span title={file.name}>{file.name}</span><small>{(file.size / 1024 / 1024).toFixed(2)} MB</small><button type="button" aria-label={`Remove ${file.name}`} onClick={() => removeFile(index)}><X /></button></div>)}</div>}
-        {files.length > 0 && <MediaPreview files={files} />}
-        <label className="field-label" htmlFor="analysis-context">Related context <span>Optional</span></label>
-        <textarea id="analysis-context" className="workspace-textarea" value={context} onChange={(event) => setContext(event.target.value)} placeholder="Add a caption, transcript, or context for this media..." rows={4} />
-        {progress !== null && <div className="upload-progress" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span>{busy && progress < 100 ? 'Uploading source' : busy ? 'Processing response' : 'Upload complete'}</span><span className="upload-progress-track"><span style={{ width: `${progress}%` }} /></span><span>{progress}%</span></div>}
+        <p className="panel-intro">Upload original files and share any context or transcripts that may help reviewers verify authenticity.</p>
+
+        {/* Modular Evidence Upload Component */}
+        <MediaUpload
+          files={files}
+          onFilesChange={handleFilesChange}
+          section={section}
+          isBusy={busy}
+          uploadProgress={progress}
+          activeFileIndex={activeFileIndex}
+          onSelectFileIndex={setActiveFileIndex}
+        />
+
+        {/* Modular Evidence Preview Area */}
+        {files.length > 0 && (
+          <MediaPreview
+            files={files}
+            activeIndex={activeFileIndex}
+            onSelectIndex={setActiveFileIndex}
+            onRemoveFile={handleRemoveFile}
+            onSyncContext={handleSyncContext}
+          />
+        )}
+
+        <label className="field-label" htmlFor="analysis-context">Related context &amp; transcripts <span>Optional</span></label>
+        <textarea
+          id="analysis-context"
+          className="workspace-textarea"
+          value={context}
+          onChange={(event) => setContext(event.target.value)}
+          placeholder="Add a caption, verified transcript, or investigation notes for this media..."
+          rows={4}
+        />
+
+        {progress !== null && (
+          <div className="upload-progress" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+            <span>{busy && progress < 100 ? 'Uploading source' : busy ? 'Processing response' : 'Upload complete'}</span>
+            <span className="upload-progress-track"><span style={{ width: `${progress}%` }} /></span>
+            <span>{progress}%</span>
+          </div>
+        )}
+
         {message && <p className="form-feedback" role="status">{message}</p>}
-        <div className="upload-actions"><span className="privacy-note"><ShieldCheck aria-hidden="true" /> Files are sent only to the configured backend endpoint.</span><button className="button button-dark" type="button" onClick={submit} disabled={busy}>{busy ? <LoaderCircle className="spinning" /> : null}{busy ? 'Analyzing…' : `Start ${config.label.toLowerCase()} analysis`}{!busy && <ArrowRight />}</button></div>
+
+        <div className="upload-actions">
+          <span className="privacy-note"><ShieldCheck aria-hidden="true" /> Files are sent only to the configured backend endpoint.</span>
+          <button className="button button-dark" type="button" onClick={submit} disabled={busy || files.length === 0}>
+            {busy ? <LoaderCircle className="spinning" /> : null}
+            {busy ? 'Analyzing…' : `Start ${config.label.toLowerCase()} analysis`}
+            {!busy && <ArrowRight />}
+          </button>
+        </div>
       </section>
+
       <aside className="workspace-panel analysis-info">
         <p className="eyebrow">A CAREFUL PROCESS</p>
         <h2>Evidence first. Interpretation second.</h2>
-        <div className="info-steps"><div><span>01</span><p>Files are submitted to the configurable analysis service.</p></div><div><span>02</span><p>Returned findings include only fields supplied by the backend.</p></div><div><span>03</span><p>Reviewers decide what the evidence means in context.</p></div></div>
-        <div className="notice-box"><AlertCircle aria-hidden="true" /><p>TruthLens does not create detections locally. No findings are shown until the backend returns them.</p></div>
+        <div className="info-steps">
+          <div><span>01</span><p>Files are submitted to the configurable analysis service.</p></div>
+          <div><span>02</span><p>Returned findings include only fields supplied by the backend.</p></div>
+          <div><span>03</span><p>Reviewers decide what the evidence means in context.</p></div>
+        </div>
+        <div className="notice-box">
+          <AlertCircle aria-hidden="true" />
+          <p>TruthLens does not create detections locally. No findings are shown until the backend returns them.</p>
+        </div>
       </aside>
     </div>
     {response !== null && <AnalysisResult response={response} section={config.label} sourcePreviewUrl={sourcePreviewUrl ?? undefined} />}
