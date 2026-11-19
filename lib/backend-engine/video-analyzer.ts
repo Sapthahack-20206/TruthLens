@@ -60,7 +60,6 @@ function runPythonForensicAnalyzer(
       path.join(process.cwd(), 'lib', 'backend-engine', 'video_forensics.py'),
       path.join(__dirname, 'video_forensics.py'),
       path.join(__dirname, '..', '..', 'lib', 'backend-engine', 'video_forensics.py'),
-      path.join(process.cwd(), 'lib', 'analysis', 'video_face_analyzer.py'),
       path.join(process.cwd(), 'video_forensics.py'),
     ]
     const scriptPath = candidatePaths.find((p) => fs.existsSync(p))
