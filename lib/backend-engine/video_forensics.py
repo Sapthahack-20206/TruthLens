@@ -1,6 +1,7 @@
 """
 TruthLens Advanced Video Forensic Engine
-Extracts video frames via FFmpeg, detects faces, analyzes biometric and visual manipulation indicators,
+Extracts video frames via OpenCV / FFmpeg, detects faces using OpenCV YuNet DNN,
+analyzes biometric and visual manipulation indicators (boundary seams, Laplacian texture variance, jitter),
 computes inter-frame temporal continuity, and produces structured forensic telemetry.
 """
 
@@ -8,11 +9,14 @@ import os
 import sys
 import json
 import base64
+import math
 import subprocess
-from io import BytesIO
-from PIL import Image, ImageDraw
 import numpy as np
-from scipy import ndimage
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 def format_time(seconds):
     mins = int(seconds // 60)
@@ -20,130 +24,164 @@ def format_time(seconds):
     ms = int(round((seconds % 1) * 100))
     return f"{mins:02d}:{secs:02d}.{ms:02d}"
 
-def make_thumbnail(img, bbox=None, max_width=320):
-    w, h = img.size
+def make_thumbnail_cv(frame_bgr, bbox=None, max_width=320):
+    if cv2 is None or frame_bgr is None:
+        return ""
+    h, w = frame_bgr.shape[:2]
     scale = min(1.0, max_width / max(w, 1))
     new_w = max(1, int(w * scale))
     new_h = max(1, int(h * scale))
-    thumb = img.resize((new_w, new_h), Image.Resampling.BILINEAR).copy()
+    thumb = cv2.resize(frame_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     if bbox:
-        # Draw bounding box
-        draw = ImageDraw.Draw(thumb)
         bx = int(bbox["x"] * scale)
         by = int(bbox["y"] * scale)
         bw = int(bbox["w"] * scale)
         bh = int(bbox["h"] * scale)
-        # Red / Orange alert box
-        draw.rectangle([bx, by, bx + bw, by + bh], outline="#f97316", width=2)
-        # Corner brackets
-        corner_len = min(8, bw // 3, bh // 3)
-        draw.line([(bx, by), (bx + corner_len, by)], fill="#06b6d4", width=3)
-        draw.line([(bx, by), (bx, by + corner_len)], fill="#06b6d4", width=3)
-        draw.line([(bx + bw, by), (bx + bw - corner_len, by)], fill="#06b6d4", width=3)
-        draw.line([(bx + bw, by), (bx + bw, by + corner_len)], fill="#06b6d4", width=3)
+        # Bounding box in BGR (Orange)
+        cv2.rectangle(thumb, (bx, by), (bx + bw, by + bh), (22, 115, 249), 2)
+        # Corner brackets (Cyan)
+        c_len = min(8, bw // 3, bh // 3)
+        cv2.line(thumb, (bx, by), (bx + c_len, by), (212, 182, 6), 3)
+        cv2.line(thumb, (bx, by), (bx, by + c_len), (212, 182, 6), 3)
+        cv2.line(thumb, (bx + bw, by), (bx + bw - c_len, by), (212, 182, 6), 3)
+        cv2.line(thumb, (bx + bw, by), (bx + bw, by + c_len), (212, 182, 6), 3)
 
-    buf = BytesIO()
-    thumb.save(buf, format="JPEG", quality=75)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+    success, buffer = cv2.imencode('.jpg', thumb, encode_param)
+    if not success:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(buffer).decode("ascii")
 
 def extract_frames(video_path, frames_dir, ffmpeg_path, fps=1, max_frames=60):
     os.makedirs(frames_dir, exist_ok=True)
-    pattern = os.path.join(frames_dir, "frame_%04d.jpg")
-    cmd = [
-        ffmpeg_path,
-        "-i", video_path,
-        "-vf", f"fps={fps}",
-        "-q:v", "2",
-        "-frames:v", str(max_frames),
-        pattern,
-        "-y"
-    ]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    frame_files = sorted([
-        os.path.join(frames_dir, f)
-        for f in os.listdir(frames_dir)
-        if f.startswith("frame_") and f.endswith(".jpg")
-    ])
-    return frame_files, proc.returncode, proc.stderr
+
+    # 1. Try OpenCV VideoCapture first (handles native decoding without ffmpeg binary)
+    if cv2 is not None:
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                v_fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+                step = max(1, int(round(v_fps / float(max(1, fps)))))
+
+                frame_files = []
+                idx = 0
+                saved_count = 0
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    if idx % step == 0:
+                        out_name = os.path.join(frames_dir, f"frame_{saved_count+1:04d}.jpg")
+                        cv2.imwrite(out_name, frame)
+                        frame_files.append(out_name)
+                        saved_count += 1
+                        if saved_count >= max_frames:
+                            break
+                    idx += 1
+                cap.release()
+                if len(frame_files) > 0:
+                    return frame_files, 0, ""
+        except Exception:
+            pass
+
+    # 2. Fallback to FFmpeg if available
+    if ffmpeg_path and os.path.exists(ffmpeg_path):
+        pattern = os.path.join(frames_dir, "frame_%04d.jpg")
+        cmd = [
+            ffmpeg_path,
+            "-i", video_path,
+            "-vf", f"fps={fps}",
+            "-q:v", "2",
+            "-frames:v", str(max_frames),
+            pattern,
+            "-y"
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        frame_files = sorted([
+            os.path.join(frames_dir, f)
+            for f in os.listdir(frames_dir)
+            if f.startswith("frame_") and f.endswith(".jpg")
+        ])
+        return frame_files, proc.returncode, proc.stderr
+
+    return [], 1, "No working video decoder available (OpenCV or FFmpeg required)."
 
 def compute_laplacian_variance(gray_arr):
-    # Laplacian filter: [[0, 1, 0], [1, -4, 1], [0, 1, 0]]
-    lap = ndimage.laplace(gray_arr)
+    if cv2 is not None:
+        return float(cv2.Laplacian(gray_arr.astype(np.uint8), cv2.CV_64F).var())
+    # Pure numpy 2D Laplacian convolution fallback
+    lap = (
+        np.roll(gray_arr, 1, axis=0) + np.roll(gray_arr, -1, axis=0) +
+        np.roll(gray_arr, 1, axis=1) + np.roll(gray_arr, -1, axis=1) -
+        4 * gray_arr
+    )
     return float(np.var(lap))
 
 def compute_blockiness(gray_arr):
-    # Detect 8x8 block boundary artifact energy (indicates re-compression / compression disparity)
     H, W = gray_arr.shape
     if H < 16 or W < 16:
         return 0.0
-    # Horizontal difference across 8-pixel boundaries
     h_diff = np.abs(gray_arr[:, 7:W-1:8] - gray_arr[:, 8:W:8])
-    # Horizontal difference within blocks (e.g. column 3 vs 4)
     h_intra = np.abs(gray_arr[:, 3:W-1:8] - gray_arr[:, 4:W:8])
     denom = float(np.mean(h_intra)) + 1e-4
     return float(np.mean(h_diff)) / denom
 
-def detect_face(arr_rgb):
-    # arr_rgb is (H, W, 3) float32
-    H, W, _ = arr_rgb.shape
-    R = arr_rgb[:, :, 0]
-    G = arr_rgb[:, :, 1]
-    B = arr_rgb[:, :, 2]
+def detect_face_yunet_or_color(img_bgr, face_detector):
+    H, W = img_bgr.shape[:2]
+    if face_detector is not None:
+        try:
+            _, faces = face_detector.detect(img_bgr)
+            if faces is not None and len(faces) > 0:
+                f0 = faces[0]
+                bx, by, bw, bh = int(f0[0]), int(f0[1]), int(f0[2]), int(f0[3])
+                bx = max(0, min(W - 10, bx))
+                by = max(0, min(H - 10, by))
+                bw = max(10, min(W - bx, bw))
+                bh = max(10, min(H - by, bh))
+                return {
+                    "bbox": {"x": bx, "y": by, "w": bw, "h": bh},
+                    "confidence": float(f0[14]),
+                    "area": bw * bh,
+                    "center": (bx + bw // 2, by + bh // 2)
+                }
+        except Exception:
+            pass
 
+    # Color threshold fallback
+    arr_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) if cv2 is not None else img_bgr.astype(np.float32)
+    R, G, B = arr_rgb[:, :, 0], arr_rgb[:, :, 1], arr_rgb[:, :, 2]
     Y = 0.299 * R + 0.587 * G + 0.114 * B
     Cb = -0.168736 * R - 0.331264 * G + 0.5 * B + 128
     Cr = 0.5 * R - 0.418688 * G - 0.081312 * B + 128
 
-    # Skin color threshold
     skin_mask = (Cb >= 80) & (Cb <= 126) & (Cr >= 134) & (Cr <= 172) & (Y >= 40)
-
-    # Morphological cleaning
-    struct = np.ones((5, 5))
-    opened = ndimage.binary_opening(skin_mask, structure=struct)
-    closed = ndimage.binary_closing(opened, structure=struct)
-
-    labeled, num_features = ndimage.label(closed)
-    slices = ndimage.find_objects(labeled)
-
-    min_area = (H * W) * 0.003
-    max_area = (H * W) * 0.65
-
-    candidate_faces = []
-    for sl in slices:
-        y_slice, x_slice = sl
-        h = y_slice.stop - y_slice.start
-        w = x_slice.stop - x_slice.start
-        area = h * w
-        if area < min_area or area > max_area:
-            continue
-
-        ratio = h / max(w, 1)
-        if 0.8 <= ratio <= 2.4:
-            face_roi_y = Y[y_slice, x_slice]
-            y_std = float(np.std(face_roi_y))
-            if y_std > 7.0:
-                candidate_faces.append({
-                    "x": int(x_slice.start),
-                    "y": int(y_slice.start),
-                    "w": int(w),
-                    "h": int(h),
-                    "area": int(area),
-                    "aspect_ratio": round(ratio, 2),
-                    "y_std": round(y_std, 2)
-                })
-
-    if not candidate_faces:
+    total_skin = int(np.sum(skin_mask))
+    if total_skin < (H * W * 0.015):
         return None
 
-    # Pick the most prominent face candidate
-    candidate_faces.sort(key=lambda f: f["area"], reverse=True)
-    return candidate_faces[0]
+    y_indices, x_indices = np.where(skin_mask)
+    if len(y_indices) == 0:
+        return None
+
+    min_x, max_x = int(np.percentile(x_indices, 5)), int(np.percentile(x_indices, 95))
+    min_y, max_y = int(np.percentile(y_indices, 5)), int(np.percentile(y_indices, 95))
+    w_box = max_x - min_x
+    h_box = max_y - min_y
+    if w_box < 20 or h_box < 20:
+        return None
+
+    return {
+        "bbox": {"x": min_x, "y": min_y, "w": w_box, "h": h_box},
+        "confidence": min(0.9, total_skin / float(H * W * 0.15)),
+        "area": w_box * h_box,
+        "center": (min_x + w_box // 2, min_y + h_box // 2)
+    }
 
 def analyze_video(video_path, ffmpeg_path, fps=1, max_frames=60):
     results = {
         "status": "completed",
-        "metadata": {},
         "findings": [],
         "suspicious_timestamps": [],
         "timeline": [],
@@ -157,238 +195,185 @@ def analyze_video(video_path, ffmpeg_path, fps=1, max_frames=60):
         "processing_errors": []
     }
 
-    temp_id = os.path.splitext(os.path.basename(video_path))[0]
-    frames_dir = os.path.join(os.environ.get("TEMP", "/tmp"), "truthlens-forensics", f"py_frames_{temp_id}")
-
-    frame_files, exit_code, stderr = extract_frames(video_path, frames_dir, ffmpeg_path, fps=fps, max_frames=max_frames)
-
-    if exit_code != 0 and len(frame_files) == 0:
+    if not os.path.exists(video_path):
         results["status"] = "failed"
-        results["processing_errors"].append(f"FFmpeg extraction failed (exit code {exit_code}): {stderr.strip()[:200]}")
+        results["processing_errors"].append(f"Target video file not found at: {video_path}")
         return results
 
-    if len(frame_files) == 0:
+    # Initialize OpenCV Face Detector (YuNet)
+    model_paths = [
+        os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'face_detection_yunet.onnx'),
+        os.path.join(os.getcwd(), 'models', 'face_detection_yunet.onnx'),
+        'models/face_detection_yunet.onnx'
+    ]
+    face_detector = None
+    if cv2 is not None:
+        for mp in model_paths:
+            if os.path.exists(mp) and os.path.getsize(mp) > 1000:
+                try:
+                    face_detector = cv2.FaceDetectorYN_create(mp, "", (320, 320), score_threshold=0.6, nms_threshold=0.3)
+                    break
+                except Exception:
+                    pass
+
+    frames_dir = os.path.join(os.path.dirname(video_path), f"py_frames_{os.getpid()}")
+    frame_files, code, err = extract_frames(video_path, frames_dir, ffmpeg_path, fps=fps, max_frames=max_frames)
+
+    if not frame_files:
         results["status"] = "failed"
-        results["processing_errors"].append("No valid frames could be decoded from video file. Container may be corrupted or codec unsupported.")
+        results["processing_errors"].append(f"Frame extraction failed: {err}")
+        results["limitations"].append("OpenCV / FFmpeg frame extractor could not decode frames.")
         return results
 
     results["metrics"]["total_frames_sampled"] = len(frame_files)
 
-    # Frame processing loop
     prev_gray = None
     prev_face = None
-    prev_blockiness = 0.0
-    prev_luminance = 0.0
     interframe_diffs = []
     blockiness_history = []
 
-    for idx, fpath in enumerate(frame_files):
+    for idx, f_path in enumerate(frame_files):
+        time_sec = idx * (1.0 / max(1, fps))
+        timecode = format_time(time_sec)
         frame_num = idx + 1
-        sec = idx / float(fps)
-        timecode = format_time(sec)
 
-        try:
-            pil_img = Image.open(fpath).convert("RGB")
-        except Exception as e:
-            results["processing_errors"].append(f"Frame #{frame_num} is unreadable or corrupted: {str(e)}")
+        img_bgr = cv2.imread(f_path) if cv2 is not None else None
+        if img_bgr is None:
             continue
 
-        arr = np.array(pil_img, dtype=np.float32)
-        H, W, _ = arr.shape
-        R, G, B = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        gray = 0.299 * R + 0.587 * G + 0.114 * B
-        mean_lum = float(np.mean(gray))
-        lum_std = float(np.std(gray))
+        H, W = img_bgr.shape[:2]
+        if face_detector is not None:
+            try:
+                face_detector.setInputSize((W, H))
+            except Exception:
+                pass
 
-        blockiness = compute_blockiness(gray)
-        blockiness_history.append(blockiness)
+        gray_arr = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY) if cv2 is not None else np.mean(img_bgr, axis=2).astype(np.uint8)
 
-        # Detect face
-        face = detect_face(arr)
-        frame_anomalies = []
-
-        # 1. Inter-frame difference (MSE & Temporal Splice)
-        inter_mse = 0.0
-        if prev_gray is not None and prev_gray.shape == gray.shape:
-            inter_mse = float(np.mean((gray - prev_gray) ** 2))
-            interframe_diffs.append(inter_mse)
-
-            if inter_mse > 45.0:
-                frame_anomalies.append({
-                    "type": "temporal_splice",
-                    "label": "Abrupt Inter-Frame Discontinuity",
-                    "description": f"Mean squared error between consecutive frames spiked to {inter_mse:.1f}. Indicates possible scene splice, abrupt edit, or dropped frames.",
-                    "severity": "moderate" if inter_mse < 80.0 else "high",
-                    "metric": f"MSE={inter_mse:.1f}"
-                })
-
-            # Check sudden lighting / exposure flash
-            lum_jump = abs(mean_lum - prev_luminance)
-            if lum_jump > 30.0:
-                frame_anomalies.append({
-                    "type": "exposure_jump",
-                    "label": "Sudden Exposure / Luminance Jump",
-                    "description": f"Average frame luminance changed by {lum_jump:.1f} units in 1 frame interval.",
-                    "severity": "low",
-                    "metric": f"Delta-Y={lum_jump:.1f}"
-                })
-
-            # Check compression disparity
-            if prev_blockiness > 0:
-                block_ratio = abs(blockiness - prev_blockiness) / prev_blockiness
-                if block_ratio > 2.8:
-                    frame_anomalies.append({
-                        "type": "compression_shift",
-                        "label": "Compression Artifact Inconsistency",
-                        "description": f"Quantization block boundary variance shifted by {block_ratio * 100:.0f}% relative to prior frame.",
-                        "severity": "moderate",
-                        "metric": f"Ratio={block_ratio:.2f}"
-                    })
-
-        # 2. Facial Biometric & Manipulation Analysis
-        if face:
-            results["metrics"]["faces_detected_count"] += 1
-            fx, fy, fw, fh = face["x"], face["y"], face["w"], face["h"]
-            face_roi_gray = gray[fy:fy+fh, fx:fx+fw]
-            
-            # Non-face background region (outer bounding region)
-            bg_mask = np.ones((H, W), dtype=bool)
-            pad_y1 = max(0, fy - 10)
-            pad_y2 = min(H, fy + fh + 10)
-            pad_x1 = max(0, fx - 10)
-            pad_x2 = min(W, fx + fw + 10)
-            bg_mask[pad_y1:pad_y2, pad_x1:pad_x2] = False
-            bg_roi_gray = gray[bg_mask]
-
-            # Texture Frequency Disparity (Laplacian variance ratio)
-            face_lap_var = compute_laplacian_variance(face_roi_gray)
-            bg_lap_var = compute_laplacian_variance(bg_roi_gray) if bg_roi_gray.size > 100 else 1.0
-            lap_ratio = face_lap_var / max(bg_lap_var, 1.0)
-
-            if lap_ratio < 0.25:
-                frame_anomalies.append({
-                    "type": "facial_texture",
-                    "label": "Facial Texture Disparity (Oversmoothing)",
-                    "description": f"High-frequency Laplacian variance in face ({face_lap_var:.1f}) is {lap_ratio:.2f}x of surrounding background ({bg_lap_var:.1f}). Characteristic of generative face-swap blending filters.",
-                    "severity": "high",
-                    "metric": f"TextureRatio={lap_ratio:.2f}"
-                })
-            elif lap_ratio > 3.8:
-                frame_anomalies.append({
-                    "type": "facial_texture",
-                    "label": "Facial Texture Disparity (High-Frequency Ringing)",
-                    "description": f"Facial region exhibits {lap_ratio:.1f}x higher spectral edge variance than background. Often observed with neural GAN upsampling or unsharp masking.",
-                    "severity": "moderate",
-                    "metric": f"TextureRatio={lap_ratio:.2f}"
-                })
-
-            # Boundary Edge Discontinuity (Warping / Alpha Mask seam)
-            # Sample border perimeter of face
-            sobel_y = np.abs(ndimage.sobel(gray, axis=0))
-            sobel_x = np.abs(ndimage.sobel(gray, axis=1))
-            sobel_mag = sobel_y + sobel_x
-
-            # Inner edge band vs outer edge band along face perimeter
-            band_inner = sobel_mag[fy:fy+fh, fx:fx+fw]
-            mean_inner_edge = float(np.mean(band_inner)) if band_inner.size > 0 else 1.0
-            
-            # Sample boundary box perimeter (3-pixel thickness border)
-            border_mask = np.zeros((H, W), dtype=bool)
-            border_mask[max(0, fy-2):min(H, fy+3), fx:fx+fw] = True
-            border_mask[max(0, fy+fh-3):min(H, fy+fh+2), fx:fx+fw] = True
-            border_mask[fy:fy+fh, max(0, fx-2):min(W, fx+3)] = True
-            border_mask[fy:fy+fh, max(0, fx+fw-3):min(W, fx+fw+2)] = True
-            boundary_edge = float(np.mean(sobel_mag[border_mask])) if np.sum(border_mask) > 0 else 1.0
-
-            edge_disparity = boundary_edge / max(mean_inner_edge, 1.0)
-            if edge_disparity > 2.5:
-                frame_anomalies.append({
-                    "type": "facial_boundary",
-                    "label": "Facial Boundary Edge Discontinuity",
-                    "description": f"Perimeter seam gradient ({boundary_edge:.1f}) is {edge_disparity:.2f}x higher than internal facial texture. Potential indicator of composite mask boundary or Poisson blending seam.",
-                    "severity": "high",
-                    "metric": f"BoundaryRatio={edge_disparity:.2f}"
-                })
-
-            # Inter-Frame Face Jitter / Displacement without Camera Pan
-            if prev_face is not None and prev_gray is not None:
-                dx = abs(face["x"] - prev_face["x"]) / float(W)
-                dy = abs(face["y"] - prev_face["y"]) / float(H)
-                disp = np.sqrt(dx**2 + dy**2)
-                area_ratio = abs(face["area"] - prev_face["area"]) / float(prev_face["area"])
-
-                # If face jumped significantly but background stayed mostly stable
-                if disp > 0.10 and inter_mse < 20.0:
-                    frame_anomalies.append({
-                        "type": "facial_jitter",
-                        "label": "Inter-Frame Facial Jitter",
-                        "description": f"Face location shifted by {disp*100:.1f}% across 1 frame while overall background remained stationary. Indicates temporal tracking flutter common in per-frame synthetic face replacement.",
-                        "severity": "critical" if disp > 0.18 else "high",
-                        "metric": f"Displacement={disp*100:.1f}%"
-                    })
-
-            prev_face = face
-        else:
-            prev_face = None
-
-        prev_gray = gray
-        prev_blockiness = blockiness
-        prev_luminance = mean_lum
-
-        # Generate base64 thumbnail for timeline & preview
-        has_anomalies = len(frame_anomalies) > 0
-        # Include thumbnails for anomalous frames or periodic keyframes
-        thumb_b64 = make_thumbnail(pil_img, bbox=face if face else None, max_width=280)
-
-        # Record timeline item
-        worst_severity = "info"
-        if any(a["severity"] == "critical" for a in frame_anomalies):
-            worst_severity = "critical"
-        elif any(a["severity"] == "high" for a in frame_anomalies):
-            worst_severity = "high"
-        elif any(a["severity"] == "moderate" for a in frame_anomalies):
-            worst_severity = "moderate"
-        elif any(a["severity"] == "low" for a in frame_anomalies):
-            worst_severity = "low"
+        # 1. Face detection
+        face = detect_face_yunet_or_color(img_bgr, face_detector)
 
         timeline_item = {
             "frameNumber": frame_num,
-            "seconds": round(sec, 2),
+            "seconds": round(time_sec, 2),
             "timestamp": timecode,
-            "isSuspicious": has_anomalies,
-            "anomalyCount": len(frame_anomalies),
+            "isSuspicious": False,
+            "anomalyCount": 0,
             "faceDetected": face is not None,
-            "faceBoundingBox": {
-                "x": round(face["x"] / W, 4),
-                "y": round(face["y"] / H, 4),
-                "width": round(face["w"] / W, 4),
-                "height": round(face["h"] / H, 4)
-            } if face else None,
-            "severity": worst_severity,
-            "indicators": [a["label"] for a in frame_anomalies],
-            "previewThumbnail": thumb_b64
+            "faceBoundingBox": face["bbox"] if face else None,
+            "severity": "info",
+            "indicators": [],
+            "previewThumbnail": None
         }
+
+        frame_anomalies = []
+
+        # 2. Interframe delta
+        if prev_gray is not None and prev_gray.shape == gray_arr.shape:
+            diff = float(np.mean(np.abs(gray_arr.astype(np.float32) - prev_gray.astype(np.float32))))
+            interframe_diffs.append(diff)
+            if diff > 48.0:
+                frame_anomalies.append({
+                    "type": "temporal_splice",
+                    "severity": "low",
+                    "label": "Inter-Frame Intensity Discontinuity",
+                    "description": f"Abrupt luminance transition ({diff:.1f} mean delta) between adjacent sampled frames.",
+                    "metric": f"{diff:.1f} delta"
+                })
+
+        # 3. Compression blockiness
+        blk = compute_blockiness(gray_arr)
+        blockiness_history.append(blk)
+
+        # 4. Facial manipulation indicators
+        if face is not None:
+            results["metrics"]["faces_detected_count"] += 1
+            bx, by, bw, bh = face["bbox"]["x"], face["bbox"]["y"], face["bbox"]["w"], face["bbox"]["h"]
+            face_roi = gray_arr[by:by+bh, bx:bx+bw]
+
+            if face_roi.size > 100:
+                face_lap = compute_laplacian_variance(face_roi)
+
+                pad = int(min(bw, bh) * 0.35)
+                oy1, oy2 = max(0, by - pad), min(H, by + bh + pad)
+                ox1, ox2 = max(0, bx - pad), min(W, bx + bw + pad)
+                outer_roi = gray_arr[oy1:oy2, ox1:ox2]
+                outer_lap = compute_laplacian_variance(outer_roi)
+
+                if outer_lap > 20.0 and face_lap > 0:
+                    ratio = face_lap / outer_lap
+                    if ratio < 0.22:
+                        frame_anomalies.append({
+                            "type": "facial_texture_smoothing",
+                            "severity": "moderate",
+                            "label": "Facial Texture Smoothing Disparity",
+                            "description": f"Facial region variance ({face_lap:.1f}) is abnormally smooth relative to context ({outer_lap:.1f}). Characteristic of autoencoder blending.",
+                            "metric": f"Laplacian ratio {ratio:.2f}"
+                        })
+
+            # Check perimeter edge seam gradient
+            top_edge = gray_arr[max(0, by-3):min(H, by+3), bx:bx+bw]
+            if top_edge.shape[0] > 2 and top_edge.shape[1] > 4:
+                edge_grad = np.abs(np.diff(top_edge.astype(np.float32), axis=0))
+                edge_energy = float(np.mean(edge_grad))
+                if edge_energy > 42.0:
+                    frame_anomalies.append({
+                        "type": "boundary_seam",
+                        "severity": "moderate",
+                        "label": "Facial Boundary Seam Discontinuity",
+                        "description": f"Elevated edge energy along facial perimeter ({edge_energy:.1f}). Characteristic of composite face swap boundary artifacts.",
+                        "metric": f"{edge_energy:.1f} edge gradient"
+                    })
+
+            # Face jitter
+            if prev_face is not None:
+                dx = face["center"][0] - prev_face["center"][0]
+                dy = face["center"][1] - prev_face["center"][1]
+                shift = math.sqrt(dx*dx + dy*dy)
+                if shift > (bw * 0.65):
+                    frame_anomalies.append({
+                        "type": "facial_jitter",
+                        "severity": "low",
+                        "label": "Facial Coordinate Spatial Jitter",
+                        "description": f"Abrupt spatial face displacement ({shift:.1f}px) across adjacent sampled interval.",
+                        "metric": f"{shift:.1f}px shift"
+                    })
+
+            prev_face = face
+
+        prev_gray = gray_arr.copy()
+
+        # Update timeline item
+        if frame_anomalies:
+            timeline_item["isSuspicious"] = True
+            timeline_item["anomalyCount"] = len(frame_anomalies)
+            timeline_item["indicators"] = [a["type"] for a in frame_anomalies]
+            has_mod = any(a["severity"] == "moderate" for a in frame_anomalies)
+            timeline_item["severity"] = "moderate" if has_mod else "low"
+
+            thumb_b64 = make_thumbnail_cv(img_bgr, face["bbox"] if face else None, max_width=320)
+            timeline_item["previewThumbnail"] = thumb_b64
+
+            for anom in frame_anomalies:
+                results["suspicious_timestamps"].append({
+                    "timestamp": timecode,
+                    "seconds": round(time_sec, 2),
+                    "frameNumber": frame_num,
+                    "label": anom["label"],
+                    "description": anom["description"],
+                    "evidenceRef": f"Frame #{frame_num} ({timecode})",
+                    "severity": anom["severity"],
+                    "anomalyType": anom["type"],
+                    "metricValue": anom.get("metric"),
+                    "isHeuristic": True,
+                    "faceDetected": face is not None,
+                    "faceBoundingBox": timeline_item["faceBoundingBox"],
+                    "previewThumbnail": thumb_b64,
+                    "frameThumbnailUrl": thumb_b64
+                })
+
         results["timeline"].append(timeline_item)
 
-        # Add to suspicious timestamps
-        for anom in frame_anomalies:
-            results["suspicious_timestamps"].append({
-                "timestamp": timecode,
-                "seconds": round(sec, 2),
-                "frameNumber": frame_num,
-                "label": anom["label"],
-                "description": anom["description"],
-                "evidenceRef": f"Frame #{frame_num} ({timecode})",
-                "severity": anom["severity"],
-                "anomalyType": anom["type"],
-                "metricValue": anom.get("metric"),
-                "isHeuristic": True,
-                "faceDetected": face is not None,
-                "faceBoundingBox": timeline_item["faceBoundingBox"],
-                "previewThumbnail": thumb_b64
-            })
-
-    # Summary Metrics
     if interframe_diffs:
         results["metrics"]["average_interframe_diff"] = round(float(np.mean(interframe_diffs)), 2)
     if blockiness_history:
@@ -415,13 +400,6 @@ def analyze_video(video_path, ffmpeg_path, fps=1, max_frames=60):
 
         count = len(items)
         sample = items[0]
-        
-        human_rec = "Examine uncompressed camera master. Check facial boundaries for blending seams and temporal consistency across surrounding frames."
-        if atype == "temporal_splice":
-            human_rec = "Inspect container metadata and audio track alignment at the indicated cut points to verify whether video was intentionally spliced."
-        elif atype == "facial_jitter":
-            human_rec = "Examine face landmarks in video editor frame-by-frame. Verify whether subject motion matches head inertia."
-
         results["findings"].append({
             "id": f"ind-vid-py-{atype}",
             "category": "video",
@@ -433,10 +411,9 @@ def analyze_video(video_path, ffmpeg_path, fps=1, max_frames=60):
             "evidenceRef": f"{count} frames (first at {sample['timestamp']})",
             "severity": highest_severity,
             "isHeuristic": True,
-            "humanReviewRecommendation": human_rec
+            "humanReviewRecommendation": "Examine uncompressed camera master. Check facial boundaries for blending seams and temporal consistency across surrounding frames."
         })
 
-    # Mandatory limitations
     results["limitations"].append(
         "Heuristic video forensic indicators (boundary gradients, texture disparity, inter-frame shifts) reflect statistical anomalies and do not prove manipulation."
     )
@@ -444,7 +421,6 @@ def analyze_video(video_path, ffmpeg_path, fps=1, max_frames=60):
         "Video compression, camera motion, variable lighting, or re-encoding can induce false-positive boundary or texture disparity."
     )
 
-    # Clean up extracted frame files
     try:
         for f in frame_files:
             if os.path.exists(f):
@@ -461,10 +437,10 @@ if __name__ == "__main__":
         print(json.dumps({"error": "Usage: python video_forensics.py <video_path> <ffmpeg_path> [fps] [max_frames]"}))
         sys.exit(1)
 
-    video_path = sys.argv[1]
-    ffmpeg_path = sys.argv[2]
-    fps = int(sys.argv[3]) if len(sys.argv) > 3 else 1
-    max_frames = int(sys.argv[4]) if len(sys.argv) > 4 else 60
+    v_path = sys.argv[1]
+    ff_path = sys.argv[2]
+    fps_val = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+    m_frames = int(sys.argv[4]) if len(sys.argv) > 4 else 60
 
-    output = analyze_video(video_path, ffmpeg_path, fps=fps, max_frames=max_frames)
-    print(json.dumps(output))
+    out = analyze_video(v_path, ff_path, fps=fps_val, max_frames=m_frames)
+    print(json.dumps(out))

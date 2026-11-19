@@ -49,6 +49,7 @@ export interface SuspiciousTimestamp {
   faceDetected?: boolean
   faceBoundingBox?: { x: number; y: number; width: number; height: number }
   previewThumbnail?: string
+  frameThumbnailUrl?: string
 }
 
 export interface VideoForensicFrame {
@@ -62,6 +63,7 @@ export interface VideoForensicFrame {
   severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
   indicators: string[]
   previewThumbnail?: string
+  frameThumbnailUrl?: string
 }
 
 export interface VideoForensicMetrics {
