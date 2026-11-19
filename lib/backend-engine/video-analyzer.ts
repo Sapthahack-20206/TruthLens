@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import type { DetectionIndicator, MediaMetadata, SuspiciousTimestamp, DeepfakeModelInterface } from './types'
 import { extractVideoFrames, extractAudioTrack, cleanupTempFiles } from './media-processor'
+import { modelService } from './model-service'
 
 // Pluggable Registry for Neural Deepfake Detection Models
 const registeredModels: Map<string, DeepfakeModelInterface> = new Map()
@@ -25,12 +26,14 @@ export async function analyzeVideoEvidence(
 ): Promise<{
   indicators: DetectionIndicator[]
   suspiciousTimestamps: SuspiciousTimestamp[]
+  visualizations: Array<{ label: string; url: string }>
   extractedAudioPath?: string
   limitations: string[]
   processingErrors: string[]
 }> {
   const indicators: DetectionIndicator[] = []
   const suspiciousTimestamps: SuspiciousTimestamp[] = []
+  const visualizations: Array<{ label: string; url: string }> = []
   const limitations: string[] = []
   const processingErrors: string[] = []
 
@@ -110,8 +113,51 @@ export async function analyzeVideoEvidence(
     })
   }
 
-  // 5. Query Registered Neural Deepfake Models (if any are installed & connected)
+  // 5. Query Working Neural Deepfake Video Model & Pluggable Registry
   let neuralModelRun = false
+
+  try {
+    const videoModelRes = await modelService.analyzeVideo(videoPath, 1.0, 45)
+    if (videoModelRes && videoModelRes.status === 'success') {
+      neuralModelRun = true
+      const maxScorePct = (videoModelRes.maxDeepfakeScore * 100).toFixed(1)
+      const meanScorePct = (videoModelRes.meanDeepfakeScore * 100).toFixed(1)
+      const isManipulated = videoModelRes.maxDeepfakeScore >= 0.50
+
+      indicators.push({
+        id: 'ind-vid-model-vit-01',
+        category: 'video',
+        type: 'Neural Deepfake Video Classifier',
+        title: `Vision Transformer Video Forensics: ${isManipulated ? 'Deepfake Indicators Detected' : 'No Significant Frame Manipulation'} (${maxScorePct}% peak)`,
+        description: `Neural model (${videoModelRes.modelName} ${videoModelRes.modelVersion}) evaluated ${videoModelRes.totalFramesAnalyzed} video frames. Peak frame deepfake probability: ${maxScorePct}%, average across frames: ${meanScorePct}%. Flagged ${videoModelRes.anomalousFrameCount} suspicious frames.`,
+        confidence: Math.round(videoModelRes.maxDeepfakeScore * 100),
+        severity: videoModelRes.maxDeepfakeScore >= 0.75 ? 'critical' : videoModelRes.maxDeepfakeScore >= 0.50 ? 'high' : 'low',
+        isHeuristic: false,
+        modelName: `${videoModelRes.modelName} (${videoModelRes.modelVersion})`,
+        humanReviewRecommendation: isManipulated
+          ? 'Review flagged keyframe timestamps for facial boundary morphing, unnatural blinking, or lighting divergence across cuts.'
+          : 'Frame-level neural classifier detected no sustained facial anomalies. Human cross-modal review recommended.',
+      })
+
+      // Add flagged timestamps from neural model
+      if (videoModelRes.suspiciousTimestamps) {
+        suspiciousTimestamps.push(...videoModelRes.suspiciousTimestamps)
+      }
+
+      // Add visualizations
+      if (videoModelRes.visualizations) {
+        visualizations.push(...videoModelRes.visualizations)
+      }
+
+      // Add limitations
+      if (videoModelRes.limitations) {
+        limitations.push(...videoModelRes.limitations)
+      }
+    }
+  } catch (err) {
+    processingErrors.push(`Neural video analysis error: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
   for (const [name, model] of registeredModels.entries()) {
     try {
       const isAvail = await model.isAvailable()
@@ -168,6 +214,7 @@ export async function analyzeVideoEvidence(
   return {
     indicators,
     suspiciousTimestamps,
+    visualizations,
     extractedAudioPath: validAudioPath,
     limitations,
     processingErrors,

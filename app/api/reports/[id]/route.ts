@@ -1,18 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { investigationStore } from '@/lib/backend-engine/investigation-store'
 import { generateForensicPdfBlob, type ForensicReportData } from '@/components/forensic-pdf-generator'
+import { enforceRateLimit } from '@/lib/backend-engine/rate-limiter'
+import { validateIdParam } from '@/lib/backend-engine/security-utils'
+import { createSafeErrorResponse } from '@/lib/backend-engine/logger'
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimitResponse = enforceRateLimit(req, 'read')
+  if (rateLimitResponse) return rateLimitResponse
+
   try {
     const { id } = await params
-    const output = investigationStore.getOutput(id)
+    const validId = validateIdParam(id)
+    if (!validId) {
+      return NextResponse.json(
+        { detail: 'Invalid report identifier format.' },
+        { status: 400 }
+      )
+    }
+
+    const output = investigationStore.getOutput(validId)
 
     const reportData: ForensicReportData = {
-      reportId: id,
-      investigationId: output?.investigationId ?? id,
+      reportId: validId,
+      investigationId: output?.investigationId ?? validId,
       title: 'TruthLens Forensic Investigation Report',
       date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
       mediaFilename: output?.metadata?.filename ?? 'evidence-source.mp4',
@@ -76,13 +90,10 @@ export async function GET(
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="truthlens-report-${id}.pdf"`,
+        'Content-Disposition': `attachment; filename="truthlens-report-${validId}.pdf"`,
       },
     })
   } catch (err) {
-    return NextResponse.json(
-      { detail: `Report generation error: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 500 }
-    )
+    return createSafeErrorResponse(err, 'Failed to generate forensic PDF report.', 500)
   }
 }

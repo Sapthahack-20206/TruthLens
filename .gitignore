@@ -30,3 +30,7 @@ next-env.d.ts
 /TruthLens/
 AGENTS.md
 
+# Large model binaries and forensic outputs
+/models/*.onnx
+/public/forensic-output/
+

@@ -3,12 +3,14 @@ import path from 'node:path'
 import os from 'node:os'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { DetectionIndicator, MediaMetadata } from './types'
+import type { DetectionIndicator, MediaMetadata, SuspiciousRegion } from './types'
+import { modelService } from './model-service'
 
 const execAsync = promisify(exec)
 
 export interface ImageAnalysisResult {
   indicators: DetectionIndicator[]
+  suspiciousRegions: SuspiciousRegion[]
   visualizations: Array<{ label: string; url: string }>
   limitations: string[]
   processingErrors: string[]
@@ -20,6 +22,7 @@ export async function analyzeImageEvidence(
   context = ''
 ): Promise<ImageAnalysisResult> {
   const indicators: DetectionIndicator[] = []
+  const suspiciousRegions: SuspiciousRegion[] = []
   const visualizations: Array<{ label: string; url: string }> = []
   const limitations: string[] = []
   const processingErrors: string[] = []
@@ -131,20 +134,80 @@ except Exception as e:
     }
   }
 
-  // 3. Neural Deepfake Model Interface Standby
-  indicators.push({
-    id: 'ind-img-model-status',
-    category: 'image',
-    type: 'Model Availability',
-    title: 'Image Neural Deepfake Model: Interface Ready / Standby',
-    description: 'Structural provenance and ELA compression checks performed. Neural facial blending and diffusion artifact detection models are in standby.',
-    severity: 'info',
-    isHeuristic: true,
-    humanReviewRecommendation: 'Review high-contrast ELA areas and edge gradients around subjects.',
-  })
+  // 3. Neural Deepfake Model Execution (ViT + YuNet)
+  try {
+    const modelResult = await modelService.analyzeImage(imagePath)
+    if (modelResult && modelResult.status === 'success') {
+      const isDf = modelResult.deepfakeProbability >= 0.50
+      const probPct = (modelResult.deepfakeProbability * 100).toFixed(1)
+      const realPct = (modelResult.realProbability * 100).toFixed(1)
+
+      indicators.push({
+        id: 'ind-img-vit-deepfake-01',
+        category: 'image',
+        type: 'Neural Deepfake Classifier',
+        title: `Vision Transformer Classifier: ${modelResult.predictedLabel} (${isDf ? probPct : realPct}% confidence)`,
+        description: `Neural model (${modelResult.modelName} ${modelResult.modelVersion}) evaluated image representation. Deepfake manipulation probability: ${probPct}%, Authenticity probability: ${realPct}%. ${modelResult.assessment}`,
+        confidence: Math.round(modelResult.confidence),
+        severity: modelResult.deepfakeProbability >= 0.75 ? 'critical' : modelResult.deepfakeProbability >= 0.50 ? 'high' : 'low',
+        isHeuristic: false,
+        modelName: `${modelResult.modelName} (${modelResult.modelVersion})`,
+        evidenceRef: modelResult.visualizations[0]?.label || 'Neural Latent Representation',
+        humanReviewRecommendation: isDf
+          ? 'Inspect high-frequency facial boundaries, iris reflections, and texture discontinuities flagged by the neural classifier.'
+          : 'Standard neural classification indicates authentic visual features. Absence of detection is not absolute proof.',
+      })
+
+      // Add indicators for specific suspicious face regions
+      if (modelResult.suspiciousRegions && modelResult.suspiciousRegions.length > 0) {
+        suspiciousRegions.push(...modelResult.suspiciousRegions)
+        for (const sr of modelResult.suspiciousRegions) {
+          indicators.push({
+            id: `ind-img-region-${sr.id}`,
+            category: 'image',
+            type: 'Suspicious Region',
+            title: sr.label,
+            description: sr.description,
+            confidence: Math.round(sr.confidence),
+            severity: sr.confidence >= 75 ? 'critical' : 'high',
+            isHeuristic: false,
+            modelName: modelResult.modelName,
+            evidenceRef: `Bounding Box: [x:${sr.box[0]}, y:${sr.box[1]}, w:${sr.box[2]}, h:${sr.box[3]}]`,
+            humanReviewRecommendation: 'Examine facial border seam against the background lighting for synthetic blending artifacts.',
+          })
+        }
+      }
+
+      // Add visualizations
+      if (modelResult.visualizations) {
+        visualizations.push(...modelResult.visualizations)
+      }
+
+      // Add model limitations
+      if (modelResult.limitations) {
+        limitations.push(...modelResult.limitations)
+      }
+    } else {
+      limitations.push('Neural deepfake model returned inconclusive inference. Fallback to heuristic and ELA checks.')
+      indicators.push({
+        id: 'ind-img-model-fallback',
+        category: 'image',
+        type: 'Model Status',
+        title: 'Neural Deepfake Model: Fallback Mode',
+        description: 'Deepfake inference engine could not complete full forward pass. Metadata provenance and ELA maps were utilized.',
+        severity: 'info',
+        isHeuristic: true,
+        humanReviewRecommendation: 'Review ELA map and camera quantization metadata manually.',
+      })
+    }
+  } catch (err) {
+    processingErrors.push(`Neural deepfake model error: ${err instanceof Error ? err.message : String(err)}`)
+    limitations.push('Neural model execution encountered an error. Heuristic inspection utilized.')
+  }
 
   return {
     indicators,
+    suspiciousRegions,
     visualizations,
     limitations,
     processingErrors,

@@ -35,6 +35,8 @@ interface EnrichedFinding extends ForensicFinding {
   severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
   evidenceType?: 'video' | 'audio' | 'transcript' | 'image' | 'cross-modal'
   humanReview?: string
+  isHeuristic?: boolean
+  modelName?: string
 }
 
 export type UncertaintyStatus = 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
@@ -98,23 +100,27 @@ export default function AnalysisResult({
 
   const rawFindings = Array.isArray(result?.findings) ? result.findings : []
   const timestamps = Array.isArray(result?.suspiciousTimestamps) ? result.suspiciousTimestamps : []
+  const suspiciousRegions = Array.isArray(result?.suspiciousRegions) ? result.suspiciousRegions : []
   const relationships = (Array.isArray(result?.evidenceRelationships) ? result.evidenceRelationships : []) as EvidenceRelationship[]
   const visualizations = Array.isArray(result?.visualizations) ? result.visualizations : []
   const metadata = result?.metadata && typeof result.metadata === 'object' ? Object.entries(result.metadata) : []
   const limitations = Array.isArray(result?.limitations) ? result.limitations : []
+  const processingErrors = Array.isArray(result?.processingErrors) ? result.processingErrors : []
 
   // Enrich findings with evidence types, severity, and human review recommendations
   const enrichedFindings: EnrichedFinding[] = useMemo(() => {
     return rawFindings.map((f, i) => {
-      const evidenceType = deriveEvidenceType(f.title, f.description, f.type)
-      const severity = deriveSeverity(f.confidence, f.type, f.title)
-      const humanReview = deriveHumanReview(f.title ?? '', evidenceType)
+      const evidenceType = (f.category as 'video' | 'audio' | 'transcript' | 'image' | 'cross-modal') || deriveEvidenceType(f.title, f.description, f.type)
+      const severity = (f.severity as 'critical' | 'high' | 'moderate' | 'low' | 'info') || deriveSeverity(f.confidence, f.type, f.title)
+      const humanReview = f.humanReviewRecommendation || deriveHumanReview(f.title ?? '', evidenceType)
       return {
         ...f,
         id: f.id ?? `finding-${i}`,
         evidenceType,
         severity,
         humanReview,
+        isHeuristic: f.isHeuristic !== undefined ? f.isHeuristic : true,
+        modelName: f.modelName,
       }
     })
   }, [rawFindings])
@@ -550,16 +556,32 @@ export default function AnalysisResult({
             {displayedFindings.map((finding) => (
               <article className={`finding-detailed-card severity-${finding.severity}`} key={finding.id}>
                 <div className="finding-card-header">
-                  <div className="finding-badge-row">
+                  <div className="finding-badge-row flex flex-wrap items-center gap-2">
                     <span className={`finding-severity-pill severity-${finding.severity}`}>
                       {finding.severity?.toUpperCase()} SEVERITY
                     </span>
                     <span className="finding-modality-pill">
                       {finding.evidenceType?.toUpperCase()}
                     </span>
+                    {finding.isHeuristic === false ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
+                        <Sparkles className="h-3 w-3 text-cyan-400" />
+                        <span>NEURAL MODEL PREDICTION</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700">
+                        <Layers className="h-3 w-3 text-slate-400" />
+                        <span>HEURISTIC INDICATOR</span>
+                      </span>
+                    )}
+                    {finding.modelName && (
+                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-900/80 text-cyan-200 border border-slate-800">
+                        {finding.modelName}
+                      </span>
+                    )}
                   </div>
 
-                  {finding.confidence && (
+                  {finding.confidence !== undefined && (
                     <span className="finding-confidence-score">
                       Confidence: <strong>{displayConfidence(finding.confidence)}</strong>
                     </span>
@@ -633,6 +655,35 @@ export default function AnalysisResult({
         </div>
       )}
 
+      {/* Suspicious Regions Section */}
+      {suspiciousRegions.length > 0 && (
+        <div className="forensic-subpanel regions-section">
+          <div className="panel-subheading">
+            <ShieldAlert className="h-4 w-4 text-rose-400" />
+            <div>
+              <h3>Detected Suspicious Facial / Image Regions ({suspiciousRegions.length})</h3>
+              <p>Localized bounding box coordinates identified with facial tampering or boundary anomalies.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+            {suspiciousRegions.map((region) => (
+              <div key={region.id} className="p-4 rounded-xl border border-rose-500/30 bg-rose-950/20 backdrop-blur-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-rose-300">{region.label}</span>
+                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 border border-rose-500/30">
+                    Confidence: {region.confidence}%
+                  </span>
+                </div>
+                <p className="text-sm text-slate-300 mb-2 leading-relaxed">{region.description}</p>
+                <div className="text-xs font-mono text-cyan-300/80 bg-slate-900/60 p-2 rounded border border-slate-800">
+                  Bounding Box: [x: {region.box[0]}, y: {region.box[1]}, w: {region.box[2]}, h: {region.box[3]}]
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Visualizations (if returned) */}
       {visualizations.length > 0 && (
         <div className="forensic-subpanel visualizations-section">
@@ -673,6 +724,24 @@ export default function AnalysisResult({
           </div>
           <ul className="returned-limitations">
             {limitations.map((item, index) => (
+              <li key={`${item}-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Processing Errors / Warnings */}
+      {processingErrors.length > 0 && (
+        <div className="forensic-subpanel errors-section border border-amber-500/30 bg-amber-950/15 p-4 rounded-2xl">
+          <div className="panel-subheading mb-3">
+            <AlertTriangle className="h-4 w-4 text-amber-400" />
+            <div>
+              <h3 className="text-amber-300 font-semibold text-sm">Processing Notes &amp; Warnings ({processingErrors.length})</h3>
+              <p className="text-xs text-amber-200/70">Non-fatal processing notices captured during forensic ingestion.</p>
+            </div>
+          </div>
+          <ul className="list-disc list-inside text-xs text-amber-200/80 space-y-1">
+            {processingErrors.map((item, index) => (
               <li key={`${item}-${index}`}>{item}</li>
             ))}
           </ul>

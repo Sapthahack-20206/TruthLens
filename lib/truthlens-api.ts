@@ -18,6 +18,7 @@ export type InvestigationRecord = {
 
 export type ForensicFinding = {
   id?: string
+  category?: 'video' | 'audio' | 'image' | 'transcript' | 'cross-modal'
   type?: string
   title?: string
   description?: string
@@ -25,6 +26,10 @@ export type ForensicFinding = {
   evidenceRef?: string
   sourceRef?: string
   confidence?: number | string
+  severity?: 'critical' | 'high' | 'moderate' | 'low' | 'info'
+  isHeuristic?: boolean
+  modelName?: string
+  humanReviewRecommendation?: string
 }
 
 export type ForensicResponse = {
@@ -33,13 +38,16 @@ export type ForensicResponse = {
   reportId?: string
   status?: string
   assessment?: string
+  uncertaintyStatus?: 'Potentially Manipulated' | 'No Significant Indicators Detected' | 'Requires Further Review'
   summary?: string
   metadata?: Record<string, string | number | boolean | null>
   findings?: ForensicFinding[]
-  suspiciousTimestamps?: { timestamp: string; label?: string; description?: string; evidenceRef?: string }[]
+  suspiciousTimestamps?: { timestamp: string; seconds?: number; label?: string; description?: string; evidenceRef?: string; severity?: string }[]
+  suspiciousRegions?: { id: string; box: [number, number, number, number]; deepfakeProbability: number; label: string; description: string; confidence: number }[]
   evidenceRelationships?: { source: string; target: string; relationship: string; explanation?: string }[]
   visualizations?: { label: string; url: string }[]
   limitations?: string[]
+  processingErrors?: string[]
 }
 
 function formatApiError(detail: string, contentType: string | null, fallback: string) {

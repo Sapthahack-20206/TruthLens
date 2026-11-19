@@ -15,25 +15,25 @@ export const EVIDENCE_CONSTRAINTS = {
   video: {
     extensions: ['mp4', 'mov', 'webm'],
     mimeTypes: ['video/mp4', 'video/quicktime', 'video/webm'],
-    maxBytes: 150 * 1024 * 1024, // 150 MB
+    maxBytes: 100 * 1024 * 1024, // 100 MB
     label: 'Video (MP4, MOV, WEBM)',
   },
   audio: {
     extensions: ['mp3', 'wav', 'm4a'],
     mimeTypes: ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/x-m4a', 'audio/aac'],
-    maxBytes: 60 * 1024 * 1024, // 60 MB
+    maxBytes: 30 * 1024 * 1024, // 30 MB
     label: 'Audio (MP3, WAV, M4A)',
   },
   image: {
     extensions: ['jpg', 'jpeg', 'png', 'webp'],
     mimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
-    maxBytes: 30 * 1024 * 1024, // 30 MB
+    maxBytes: 15 * 1024 * 1024, // 15 MB
     label: 'Image (JPG, JPEG, PNG, WEBP)',
   },
   text: {
     extensions: ['txt'],
     mimeTypes: ['text/plain'],
-    maxBytes: 10 * 1024 * 1024, // 10 MB
+    maxBytes: 5 * 1024 * 1024, // 5 MB
     label: 'Transcript / Context (TXT)',
   },
 } as const

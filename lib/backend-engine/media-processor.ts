@@ -5,35 +5,56 @@ import crypto from 'node:crypto'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { MediaMetadata } from './types'
+import {
+  validateFileSignature,
+  sanitizeFilename,
+  MAX_FILE_SIZE_BYTES,
+  MAX_VIDEO_SIZE_BYTES,
+  MAX_AUDIO_SIZE_BYTES,
+  MAX_IMAGE_SIZE_BYTES,
+} from './security-utils'
+import { logger } from './logger'
+import { modelService } from './model-service'
 
 const execAsync = promisify(exec)
 
-export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024 // 100 MB
-
-export const ALLOWED_MIME_TYPES = new Set([
-  'video/mp4',
-  'video/quicktime',
-  'video/x-msvideo',
-  'video/webm',
-  'audio/wav',
-  'audio/x-wav',
-  'audio/mpeg',
-  'audio/mp3',
-  'audio/mp4',
-  'audio/x-m4a',
-  'audio/aac',
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-])
-
-const TEMP_BASE_DIR = path.join(os.tmpdir(), 'truthlens-forensics')
+export const TEMP_BASE_DIR = path.join(os.tmpdir(), 'truthlens-forensics')
 
 function ensureTempDir(): string {
   if (!fs.existsSync(TEMP_BASE_DIR)) {
     fs.mkdirSync(TEMP_BASE_DIR, { recursive: true })
   }
   return TEMP_BASE_DIR
+}
+
+/**
+ * Periodically or on-demand purges orphaned forensic temporary files older than maxAgeMs.
+ * Prevents local disk exhaustion and ensures privacy hygiene.
+ */
+export function purgeStaleTempFiles(maxAgeMs = 30 * 60 * 1000) {
+  try {
+    if (!fs.existsSync(TEMP_BASE_DIR)) return
+    const now = Date.now()
+    const entries = fs.readdirSync(TEMP_BASE_DIR)
+
+    for (const entry of entries) {
+      const fullPath = path.join(TEMP_BASE_DIR, entry)
+      try {
+        const stats = fs.statSync(fullPath)
+        if (now - stats.mtimeMs > maxAgeMs) {
+          if (stats.isDirectory()) {
+            fs.rmSync(fullPath, { recursive: true, force: true })
+          } else {
+            fs.unlinkSync(fullPath)
+          }
+        }
+      } catch {
+        // Continue cleaning other entries
+      }
+    }
+  } catch (err) {
+    logger.warn('Error during stale temp file purge', err)
+  }
 }
 
 export async function validateAndSaveMediaFile(
@@ -46,46 +67,115 @@ export async function validateAndSaveMediaFile(
 }> {
   const errors: string[] = []
   const tempDir = ensureTempDir()
-  const fileId = crypto.randomUUID()
-  const sanitizedName = originalFilename.replace(/[^a-zA-Z0-9._-]/g, '_')
-  const ext = path.extname(sanitizedName).toLowerCase() || '.bin'
-  const targetPath = path.join(tempDir, `${fileId}${ext}`)
+  
+  // Clean up stale files on incoming upload
+  purgeStaleTempFiles()
+
+  // 1. Sanitize Client Filename & Defend Against Path Traversal
+  const sanitizedName = sanitizeFilename(originalFilename)
 
   const arrayBuffer = await file.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
 
-  // 1. Validate File Size
+  // 2. Validate Buffer Integrity & Absolute Size Limit
   if (buffer.length === 0) {
     errors.push('Uploaded file is empty (0 bytes).')
+    return {
+      savedPath: '',
+      metadata: {
+        filename: sanitizedName,
+        fileSize: 0,
+        mimeType: 'application/octet-stream',
+        extension: path.extname(sanitizedName),
+        hashSha256: '',
+      },
+      errors,
+    }
   }
+
   if (buffer.length > MAX_FILE_SIZE_BYTES) {
     errors.push(`File exceeds maximum permitted size of 100 MB (${(buffer.length / 1024 / 1024).toFixed(2)} MB).`)
+    return {
+      savedPath: '',
+      metadata: {
+        filename: sanitizedName,
+        fileSize: buffer.length,
+        mimeType: 'application/octet-stream',
+        extension: path.extname(sanitizedName),
+        hashSha256: '',
+      },
+      errors,
+    }
   }
 
-  // 2. Validate MIME Type / Magic Bytes
-  const mimeType = file.type || inferMimeType(ext)
-  if (!isAllowedMime(mimeType, ext)) {
-    errors.push(`File type "${mimeType}" (${ext}) is not supported for forensic processing.`)
+  // 3. Strict File Signature (Magic Bytes) Verification
+  const sig = validateFileSignature(buffer, sanitizedName, file.type)
+  if (!sig.isValid) {
+    errors.push(sig.error || 'File validation failed: Unsupported or malformed file container.')
+    return {
+      savedPath: '',
+      metadata: {
+        filename: sanitizedName,
+        fileSize: buffer.length,
+        mimeType: sig.detectedMime,
+        extension: sig.normalizedExt,
+        hashSha256: '',
+      },
+      errors,
+    }
   }
 
-  // 3. Compute SHA-256 for Evidentiary Chain of Custody
+  // 4. Modality-Specific File Size Thresholds
+  if (sig.category === 'image' && buffer.length > MAX_IMAGE_SIZE_BYTES) {
+    errors.push(`Image file exceeds maximum permitted image size of 15 MB (${(buffer.length / 1024 / 1024).toFixed(2)} MB).`)
+    return {
+      savedPath: '',
+      metadata: {
+        filename: sanitizedName,
+        fileSize: buffer.length,
+        mimeType: sig.detectedMime,
+        extension: sig.normalizedExt,
+        hashSha256: '',
+      },
+      errors,
+    }
+  }
+
+  if (sig.category === 'audio' && buffer.length > MAX_AUDIO_SIZE_BYTES) {
+    errors.push(`Audio file exceeds maximum permitted audio size of 30 MB (${(buffer.length / 1024 / 1024).toFixed(2)} MB).`)
+    return {
+      savedPath: '',
+      metadata: {
+        filename: sanitizedName,
+        fileSize: buffer.length,
+        mimeType: sig.detectedMime,
+        extension: sig.normalizedExt,
+        hashSha256: '',
+      },
+      errors,
+    }
+  }
+
+  // 5. Compute SHA-256 for Evidentiary Chain of Custody
   const hashSha256 = crypto.createHash('sha256').update(buffer).digest('hex')
 
-  // 4. Save to isolated sandbox location
+  // 6. Write File using a Secure Random UUID
+  // NEVER use user-controlled filenames on the filesystem!
+  const fileId = crypto.randomUUID()
+  const targetPath = path.join(tempDir, `${fileId}${sig.normalizedExt}`)
   fs.writeFileSync(targetPath, buffer)
 
-  // 5. Extract structural metadata
+  // 7. Extract Container Structural Metadata Safely
   const metadata: MediaMetadata = {
-    filename: originalFilename,
+    filename: sanitizedName,
     fileSize: buffer.length,
-    mimeType,
-    extension: ext,
+    mimeType: sig.detectedMime,
+    extension: sig.normalizedExt,
     hashSha256,
     createdAt: new Date().toISOString(),
   }
 
-  // Extract container-level metadata
-  extractContainerMetadata(buffer, ext, metadata)
+  extractContainerMetadata(buffer, sig.normalizedExt, metadata)
 
   return {
     savedPath: targetPath,
@@ -94,33 +184,9 @@ export async function validateAndSaveMediaFile(
   }
 }
 
-function isAllowedMime(mime: string, ext: string): boolean {
-  if (ALLOWED_MIME_TYPES.has(mime)) return true
-  const validExts = ['.mp4', '.mov', '.avi', '.webm', '.wav', '.mp3', '.m4a', '.jpg', '.jpeg', '.png', '.webp']
-  return validExts.includes(ext.toLowerCase())
-}
-
-function inferMimeType(ext: string): string {
-  switch (ext.toLowerCase()) {
-    case '.mp4': return 'video/mp4'
-    case '.mov': return 'video/quicktime'
-    case '.webm': return 'video/webm'
-    case '.avi': return 'video/x-msvideo'
-    case '.wav': return 'audio/wav'
-    case '.mp3': return 'audio/mpeg'
-    case '.m4a': return 'audio/mp4'
-    case '.jpg':
-    case '.jpeg': return 'image/jpeg'
-    case '.png': return 'image/png'
-    case '.webp': return 'image/webp'
-    default: return 'application/octet-stream'
-  }
-}
-
 function extractContainerMetadata(buffer: Buffer, ext: string, out: MediaMetadata) {
   try {
     if (ext === '.jpg' || ext === '.jpeg') {
-      // Look for EXIF APP1 marker 0xFFE1
       let offset = 2
       while (offset < buffer.length - 4) {
         if (buffer[offset] === 0xFF && buffer[offset + 1] === 0xE1) {
@@ -134,22 +200,19 @@ function extractContainerMetadata(buffer: Buffer, ext: string, out: MediaMetadat
       }
       out.colorSpace = 'sRGB'
     } else if (ext === '.png') {
-      // PNG IHDR chunk (width at offset 16, height at offset 20)
       if (buffer.length >= 24 && buffer.slice(12, 16).toString('ascii') === 'IHDR') {
         const width = buffer.readUInt32BE(16)
         const height = buffer.readUInt32BE(20)
         out.resolution = { width, height }
       }
     } else if (ext === '.wav') {
-      // RIFF header
       if (buffer.slice(0, 4).toString('ascii') === 'RIFF') {
         const channels = buffer.readUInt16LE(22)
         const sampleRate = buffer.readUInt32LE(24)
         out.channels = channels
         out.sampleRate = sampleRate
       }
-    } else if (ext === '.mp4') {
-      // Check for ftyp atom
+    } else if (ext === '.mp4' || ext === '.mov' || ext === '.m4a') {
       if (buffer.slice(4, 8).toString('ascii') === 'ftyp') {
         out.containerFormat = 'ISO/IEC 14496-12 (MPEG-4 Part 12)'
         const brand = buffer.slice(8, 12).toString('ascii')
@@ -175,11 +238,36 @@ export async function extractVideoFrames(
   framesDir: string,
   fps = 1
 ): Promise<{ extractedFrames: string[]; error?: string }> {
-  const isAvailable = await checkFfmpegAvailable()
-  if (!isAvailable) {
+  // Validate path safety: must reside inside TEMP_BASE_DIR
+  const resolvedVideo = path.resolve(videoPath)
+  const resolvedFrames = path.resolve(framesDir)
+  if (!resolvedVideo.startsWith(TEMP_BASE_DIR) || !resolvedFrames.startsWith(TEMP_BASE_DIR)) {
     return {
       extractedFrames: [],
-      error: 'FFmpeg binary is not installed or available in PATH. Frame extraction skipped.',
+      error: 'Security boundary violated: Paths must reside strictly within the forensic sandbox.',
+    }
+  }
+
+  // Use safe numerical fps argument
+  const safeFps = Math.max(0.1, Math.min(fps, 30))
+
+  const isAvailable = await checkFfmpegAvailable()
+  if (!isAvailable) {
+    // Intelligent fallback: Extract video frames via OpenCV Python engine
+    try {
+      const openCvRes = await modelService.extractVideoFramesOpenCV(resolvedVideo, framesDir, safeFps, 45)
+      if (openCvRes.extractedFrames.length > 0) {
+        return { extractedFrames: openCvRes.extractedFrames }
+      }
+      return {
+        extractedFrames: [],
+        error: openCvRes.error || 'OpenCV video frame extraction failed.',
+      }
+    } catch (err) {
+      return {
+        extractedFrames: [],
+        error: `Frame extraction fallback error: ${err instanceof Error ? err.message : String(err)}`,
+      }
     }
   }
 
@@ -188,7 +276,7 @@ export async function extractVideoFrames(
   }
 
   const outputPattern = path.join(framesDir, 'frame_%04d.jpg')
-  const cmd = `ffmpeg -i "${videoPath}" -vf fps=${fps} -q:v 2 "${outputPattern}" -y`
+  const cmd = `ffmpeg -i "${resolvedVideo}" -vf fps=${safeFps} -q:v 2 "${outputPattern}" -y`
 
   try {
     await execAsync(cmd)
@@ -209,6 +297,14 @@ export async function extractAudioTrack(
   videoPath: string,
   outputAudioPath: string
 ): Promise<{ audioPath?: string; error?: string }> {
+  const resolvedVideo = path.resolve(videoPath)
+  const resolvedAudio = path.resolve(outputAudioPath)
+  if (!resolvedVideo.startsWith(TEMP_BASE_DIR) || !resolvedAudio.startsWith(TEMP_BASE_DIR)) {
+    return {
+      error: 'Security boundary violated: Audio extraction path outside forensic sandbox.',
+    }
+  }
+
   const isAvailable = await checkFfmpegAvailable()
   if (!isAvailable) {
     return {
@@ -216,11 +312,11 @@ export async function extractAudioTrack(
     }
   }
 
-  const cmd = `ffmpeg -i "${videoPath}" -vn -acodec pcm_s16le -ar 44100 -ac 2 "${outputAudioPath}" -y`
+  const cmd = `ffmpeg -i "${resolvedVideo}" -vn -acodec pcm_s16le -ar 44100 -ac 2 "${resolvedAudio}" -y`
   try {
     await execAsync(cmd)
-    if (fs.existsSync(outputAudioPath) && fs.statSync(outputAudioPath).size > 0) {
-      return { audioPath: outputAudioPath }
+    if (fs.existsSync(resolvedAudio) && fs.statSync(resolvedAudio).size > 0) {
+      return { audioPath: resolvedAudio }
     }
     return { error: 'Extracted audio file is empty or video had no audio stream.' }
   } catch (err) {
@@ -230,15 +326,18 @@ export async function extractAudioTrack(
   }
 }
 
-export function cleanupTempFiles(...paths: string[]) {
+export function cleanupTempFiles(...paths: (string | undefined | null)[]) {
   for (const p of paths) {
+    if (!p) continue
     try {
-      if (fs.existsSync(p)) {
-        const stat = fs.statSync(p)
+      const resolved = path.resolve(p)
+      // Only delete files within TEMP_BASE_DIR for safety
+      if (resolved.startsWith(TEMP_BASE_DIR) && fs.existsSync(resolved)) {
+        const stat = fs.statSync(resolved)
         if (stat.isDirectory()) {
-          fs.rmSync(p, { recursive: true, force: true })
+          fs.rmSync(resolved, { recursive: true, force: true })
         } else {
-          fs.unlinkSync(p)
+          fs.unlinkSync(resolved)
         }
       }
     } catch {

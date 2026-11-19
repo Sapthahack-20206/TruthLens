@@ -52,6 +52,15 @@ export interface EvidenceRelationship {
   inconsistencyType?: 'lip-sync' | 'transcript-mismatch' | 'video-artifact' | 'audio-manipulation' | 'temporal-splice' | 'general'
 }
 
+export interface SuspiciousRegion {
+  id: string
+  box: [number, number, number, number]
+  deepfakeProbability: number
+  label: string
+  description: string
+  confidence: number
+}
+
 export interface ForensicAnalysisOutput {
   id: string
   investigationId: string
@@ -63,6 +72,7 @@ export interface ForensicAnalysisOutput {
   metadata: MediaMetadata
   findings: DetectionIndicator[]
   suspiciousTimestamps: SuspiciousTimestamp[]
+  suspiciousRegions?: SuspiciousRegion[]
   evidenceRelationships: EvidenceRelationship[]
   visualizations: Array<{ label: string; url: string }>
   limitations: string[]

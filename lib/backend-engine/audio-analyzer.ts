@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { DetectionIndicator, MediaMetadata, SuspiciousTimestamp, SyntheticVoiceModelInterface, SpeechTranscriptionService } from './types'
+import { modelService } from './model-service'
 
 const execAsync = promisify(exec)
 
@@ -31,12 +32,14 @@ export async function analyzeAudioEvidence(
 ): Promise<{
   indicators: DetectionIndicator[]
   suspiciousTimestamps: SuspiciousTimestamp[]
+  visualizations: Array<{ label: string; url: string }>
   transcription?: Array<{ start: number; end: number; text: string; speaker?: string; confidence?: number }>
   limitations: string[]
   processingErrors: string[]
 }> {
   const indicators: DetectionIndicator[] = []
   const suspiciousTimestamps: SuspiciousTimestamp[] = []
+  const visualizations: Array<{ label: string; url: string }> = []
   const limitations: string[] = []
   const processingErrors: string[] = []
 
@@ -184,8 +187,46 @@ export async function analyzeAudioEvidence(
     }
   }
 
-  // 3. Synthetic Voice Detection Models (Pluggable Interface)
+  // 3. Acoustic Spectral & Neural Vocoder Detection
   let syntheticModelRun = false
+
+  try {
+    const audioModelRes = await modelService.analyzeAudio(audioPath)
+    if (audioModelRes && audioModelRes.status === 'success') {
+      syntheticModelRun = true
+      const synthProbPct = Math.round(audioModelRes.syntheticProbability * 100)
+      const isSynth = audioModelRes.syntheticProbability >= 0.50
+
+      indicators.push({
+        id: 'ind-aud-spectral-model-01',
+        category: 'audio',
+        type: 'Acoustic Spectral Analysis',
+        title: isSynth
+          ? `Acoustic Spectral Model: Potential Voice Synthesis (${synthProbPct}%)`
+          : `Acoustic Spectral Model: Natural Voice Timbre (${100 - synthProbPct}% natural)`,
+        description: `STFT spectral analysis evaluated frequency distribution and harmonics across ${(audioModelRes.sampleRate / 1000).toFixed(1)} kHz bandwidth. ${audioModelRes.reasons.length > 0 ? audioModelRes.reasons.join(' ') : 'Normal harmonic decay and spectral flux observed across active speech.'}`,
+        confidence: isSynth ? synthProbPct : (100 - synthProbPct),
+        severity: audioModelRes.syntheticProbability >= 0.75 ? 'critical' : audioModelRes.syntheticProbability >= 0.50 ? 'high' : 'low',
+        isHeuristic: false,
+        modelName: 'STFT-Vocoder-Spectral-Analyzer',
+        evidenceRef: audioModelRes.visualizations[0]?.label || 'Acoustic Spectrogram Map',
+        humanReviewRecommendation: isSynth
+          ? 'Review spectrogram for sudden harmonic truncation above 8 kHz and examine phase continuity in voiced phonemes.'
+          : 'Standard acoustic spectrum matches natural human speech characteristics.',
+      })
+
+      if (audioModelRes.visualizations) {
+        visualizations.push(...audioModelRes.visualizations)
+      }
+
+      if (audioModelRes.limitations) {
+        limitations.push(...audioModelRes.limitations)
+      }
+    }
+  } catch (err) {
+    processingErrors.push(`Acoustic spectral model error: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
   for (const [name, model] of registeredVoiceModels.entries()) {
     try {
       if (await model.isAvailable()) {
@@ -237,6 +278,7 @@ export async function analyzeAudioEvidence(
   return {
     indicators,
     suspiciousTimestamps,
+    visualizations,
     transcription,
     limitations,
     processingErrors,
