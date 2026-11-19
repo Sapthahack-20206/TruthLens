@@ -245,6 +245,17 @@ function extractContainerMetadata(buffer: Buffer, ext: string, out: MediaMetadat
 
 let cachedFfmpegPath: string | null = null
 
+function ensureExecutable(binaryPath: string): string {
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(binaryPath, 0o755)
+    } catch {
+      // Ignore if filesystem is read-only or permission already granted
+    }
+  }
+  return binaryPath
+}
+
 export function getFfmpegPath(): string {
   if (cachedFfmpegPath) return cachedFfmpegPath
 
@@ -253,16 +264,33 @@ export function getFfmpegPath(): string {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ffmpegStatic = require('ffmpeg-static')
     if (ffmpegStatic && typeof ffmpegStatic === 'string' && fs.existsSync(ffmpegStatic)) {
-      cachedFfmpegPath = ffmpegStatic
-      return ffmpegStatic
+      cachedFfmpegPath = ensureExecutable(ffmpegStatic)
+      return cachedFfmpegPath
     }
   } catch {
     // Ignore and fallback
   }
 
-  // 2. Try FFMPEG_PATH environment variable
-  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
-    cachedFfmpegPath = process.env.FFMPEG_PATH
+  // 1b. Try cwd/node_modules/ffmpeg-static binary fallback
+  try {
+    const cwdBinary = path.join(
+      process.cwd(),
+      'node_modules',
+      'ffmpeg-static',
+      process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+    )
+    if (fs.existsSync(cwdBinary)) {
+      cachedFfmpegPath = ensureExecutable(cwdBinary)
+      return cachedFfmpegPath
+    }
+  } catch {
+    // Ignore and fallback
+  }
+
+  // 2. Try FFMPEG_PATH or FFMPEG_BIN environment variable
+  const envPath = process.env.FFMPEG_PATH || process.env.FFMPEG_BIN
+  if (envPath && fs.existsSync(envPath)) {
+    cachedFfmpegPath = ensureExecutable(envPath)
     return cachedFfmpegPath
   }
 

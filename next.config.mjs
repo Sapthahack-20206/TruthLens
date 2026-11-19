@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: ['ffmpeg-static'],
+  outputFileTracingIncludes: {
+    '/api/**/*': ['./node_modules/ffmpeg-static/**/*'],
+  },
   typescript: {
     ignoreBuildErrors: false,
   },

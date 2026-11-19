@@ -10,6 +10,9 @@ import { analyzeAudioEvidence } from '@/lib/backend-engine/audio-analyzer'
 import { analyzeImageEvidence } from '@/lib/backend-engine/image-analyzer'
 import { executeMultimodalCorrelation } from '@/lib/multimodal-correlation-engine'
 
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   const rateLimitResponse = enforceRateLimit(req, 'analyze')
   if (rateLimitResponse) return rateLimitResponse
