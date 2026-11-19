@@ -40,10 +40,10 @@ export function validateFileSignature(
   declaredFilename: string,
   declaredMime?: string
 ): FileSignatureResult {
-  if (buffer.length < 8) {
+  if (buffer.length < 4) {
     return {
       isValid: false,
-      detectedMime: 'application/octet-stream',
+      detectedMime: declaredMime || 'application/octet-stream',
       normalizedExt: '',
       error: 'File is too small or truncated to contain a valid media header.',
     }

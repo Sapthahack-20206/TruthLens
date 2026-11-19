@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import useSWR from 'swr'
+import useSWR, { mutate } from 'swr'
 import { Activity, AlertCircle, ArrowDown, ArrowRight, AudioLines, Bell, Check, ChevronDown, CircleHelp, Clock3, FileImage, FileSearch, FileText, Fingerprint, Image as ImageIcon, LoaderCircle, Menu, Plus, Search, ShieldCheck, Upload, UserRound, Video, X } from 'lucide-react'
 import { analyzeAudio, analyzeCrossModal, analyzeImage, analyzeVideo, getInvestigation, getReport, listInvestigations, type InvestigationRecord } from '@/lib/truthlens-api'
 import AnalysisResult from '@/components/analysis-result'
@@ -120,6 +120,7 @@ function UploadWorkspace({ section }: { section: string }) {
       setResponse(result)
       setProgress(100)
       setMessage('The configured analysis service responded. Only returned evidence is shown below.')
+      mutate('truthlens-investigations')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The analysis service is unavailable.')
       setProgress(null)
